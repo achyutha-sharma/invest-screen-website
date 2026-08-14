@@ -412,6 +412,15 @@ h2.co .day{font-size:.7rem;vertical-align:middle}
 .mcol p::before{content:"";position:absolute;left:.2rem;top:1.05em;width:5px;height:5px;
   border-radius:50%;background:var(--text-3)}
 
+
+/* search results */
+.hit{display:flex;align-items:baseline;gap:.8rem;padding:.55rem .8rem;background:var(--surf);
+  border:1px solid var(--line);border-radius:7px;min-height:2.4rem}
+.hit .ht{font-family:var(--mono);font-size:.72rem;font-weight:700;color:var(--acc);
+  min-width:3.8rem;letter-spacing:.04em}
+.hit .hn{font-size:.9rem;color:var(--text)}
+div[data-testid="stColumn"] .stButton button{height:2.4rem}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -582,6 +591,9 @@ if "cik" not in st.session_state and not query and prices.configured:
                    "research — but they tell you whether a stock moved on its own news or "
                    "with everything else.")
 
+if query and st.session_state.pop("just_opened", False):
+    query = ""
+
 if query:
     try:
         hits = search(query)
@@ -592,12 +604,27 @@ if query:
         st.warning(f"Nothing matches “{query}”. Only US companies that file with "
                    "the SEC are covered — try a shorter name, or the ticker.")
         st.stop()
-    chosen = hits[0] if len(hits) == 1 else st.selectbox(
-        "Which company?", hits, format_func=lambda m: f"{m['name']} · {m['ticker']}")
-    st.session_state.pop("fund", None)
-    st.session_state["cik"] = chosen["cik"]
-    st.session_state["ticker"] = chosen["ticker"]
-    st.session_state["name"] = chosen["name"]
+    # A list rather than a dropdown, and never auto-selected. The exact ticker
+    # a reader wants is often not the first hit -- "delta" reaches an airline
+    # and an apparel maker -- so showing the alternatives costs one click and
+    # saves guessing the precise name.
+    st.markdown(f'<p class="picker">{len(hits)} '
+                f'{"match" if len(hits) == 1 else "matches"}</p>', unsafe_allow_html=True)
+    for h in hits:
+        c1, c2 = st.columns([5, 1])
+        c1.markdown(f'<div class="hit"><span class="ht">{E(h["ticker"])}</span>'
+                    f'<span class="hn">{E(h["name"].title())}</span></div>',
+                    unsafe_allow_html=True)
+        if c2.button("Open", key=f"hit_{h['cik']}", use_container_width=True):
+            st.session_state.pop("fund", None)
+            for k in ("step", "quiz", "quiz_round"):
+                st.session_state.pop(k, None)
+            st.session_state["cik"] = h["cik"]
+            st.session_state["ticker"] = h["ticker"]
+            st.session_state["name"] = h["name"]
+            st.session_state["just_opened"] = True
+            st.rerun()
+    st.stop()
 
 # --------------------------------------------------------------------------
 # Fund page
