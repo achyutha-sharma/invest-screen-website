@@ -367,6 +367,13 @@ div[data-testid="stHorizontalBlock"]:has(button[kind])
 .gl p.wm b{color:var(--text-2)}
 .gl{padding:1.05rem 1.1rem}
 
+
+.chart svg{display:block;width:100%;height:auto}
+.ckey{display:flex;gap:1.1rem;font-family:var(--mono);font-size:.68rem;margin-bottom:.5rem}
+.ckey span{display:flex;align-items:center;gap:.4rem;color:var(--text-2)}
+.ln{width:15px;height:2.5px;border-radius:2px;display:inline-block}
+h2.co .day{font-size:.7rem;vertical-align:middle}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -490,7 +497,7 @@ if "cik" not in st.session_state:
     st.markdown('<h1 class="hero">Research a stock <em>properly</em>.</h1>'
                 '<p class="sub">Straight from SEC filings.</p>', unsafe_allow_html=True)
 
-query = st.text_input("Company name or ticker", placeholder="Nike, Starbucks, Netflix").strip()
+query = st.text_input("Company name or ticker", placeholder="Search").strip()
 
 if query:
     try:
@@ -523,9 +530,13 @@ except ValueError as e:
 except Exception as e:
     if "404" in str(e):
         st.warning(
-            "This filer has no XBRL financial data at the SEC. That is normal for funds, "
-            "trusts and holding companies, which file in a different format. Try an "
-            "operating company.")
+            "**No financial statements are filed for this one.**\n\n"
+            "Index funds and ETFs — S&P 500 trackers, sector funds — file holdings reports "
+            "rather than 10-Ks. A fund has no revenue, no profit and no margin, because it "
+            "does not run a business: it holds shares in hundreds of companies that do. "
+            "Every ratio on this page would be meaningless.\n\n"
+            "The same applies to trusts and some holding companies. Search an operating "
+            "company instead.")
     else:
         st.error(f"Could not load filings: {e}")
     if st.button("← Search again"):
@@ -815,7 +826,7 @@ if q.available and q.day_change_pct is not None:
     day = (f'<span class="day {tone}">{arrow} {abs(q.day_change_pct):.2f}% today</span>')
 
 
-st.markdown(f'<span class="tk">{E(ticker)}</span>{day}<h2 class="co">{E(eq.entity)}</h2>'
+st.markdown(f'<span class="tk">{E(ticker)}</span><h2 class="co">{E(eq.entity)}{day}</h2>'
             f'<p class="one">{E(prof.get("industry") or "")}'
             f'{" · " if prof.get("industry") else ""}CIK {E(cik)} · '
             f'{E(latest.label)} · Form 10-K</p>', unsafe_allow_html=True)
@@ -987,6 +998,79 @@ if have:
                 f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
     st.caption("Green is the direction you would rather see — for debt that means falling. "
                "The last column compares the newest year with the oldest shown.")
+
+# --------------------------------------------------------------------------
+# Trend chart
+# --------------------------------------------------------------------------
+# Revenue and profit per share, both indexed to 100 at the first year shown.
+# Indexing is what makes them comparable: the point is not the level of either
+# but whether they move together. Where EPS outpaces revenue the company is
+# keeping more of each sale; where it lags, costs or the share count are
+# growing faster than the business.
+
+rev_hist = eq.series("revenue")
+eps_hist = eq.series("eps")
+if len(rev_hist) >= 3 and len(eps_hist) >= 3:
+    sh("Trend", f"{rev_hist[0][0]} to {rev_hist[-1][0]}")
+    W, H, L, R, T, B = 780, 210, 38, 12, 14, 26
+
+    def indexed(series):
+        base = series[0][1]
+        return [100 * v / base for _, v in series] if base else []
+
+    ri, ei = indexed(rev_hist), indexed(eps_hist)
+    allv = [v for v in ri + ei if v is not None]
+    lo, hi = min(allv + [100]), max(allv)
+    pad = (hi - lo) * 0.10 or 10
+    y0, y1 = lo - pad, hi + pad
+
+    def X(i, n):
+        return L + (i / max(n - 1, 1)) * (W - L - R)
+
+    def Y(v):
+        return T + (1 - (v - y0) / (y1 - y0)) * (H - T - B)
+
+    def path(a):
+        return " ".join(f"{'L' if i else 'M'}{X(i, len(a)):.1f},{Y(v):.1f}"
+                        for i, v in enumerate(a))
+
+    grid = ""
+    for g in range(4):
+        v = y0 + (y1 - y0) * g / 3
+        y = Y(v)
+        grid += (f'<line x1="{L}" y1="{y:.1f}" x2="{W - R}" y2="{y:.1f}" stroke="#332B60"/>'
+                 f'<text x="{L - 7}" y="{y + 3.5:.1f}" text-anchor="end" '
+                 'font-family="IBM Plex Mono,monospace" font-size="9" font-weight="600" '
+                 f'fill="#7F779E">{v:.0f}</text>')
+
+    labels = ""
+    step = max(len(rev_hist) // 5, 1)
+    for i, (lab, _) in enumerate(rev_hist):
+        if i % step == 0 or i == len(rev_hist) - 1:
+            labels += (f'<text x="{X(i, len(rev_hist)):.1f}" y="{H - 8}" text-anchor="middle" '
+                       'font-family="IBM Plex Mono,monospace" font-size="9" font-weight="600" '
+                       f"fill=\"#7F779E\">&#39;{E(lab[-2:])}</text>")
+
+    dots = (f'<circle cx="{X(len(ri) - 1, len(ri)):.1f}" cy="{Y(ri[-1]):.1f}" r="3.6" '
+            'fill="#A98BFF"/>'
+            f'<circle cx="{X(len(ei) - 1, len(ei)):.1f}" cy="{Y(ei[-1]):.1f}" r="3.2" '
+            'fill="#5FD69B"/>')
+
+    st.markdown(f'''<div class="panel chart">
+      <div class="ckey"><span><i class="ln" style="background:#A98BFF"></i>revenue</span>
+        <span><i class="ln" style="background:#5FD69B"></i>profit per share</span></div>
+      <svg viewBox="0 0 {W} {H}" role="img"
+           aria-label="Revenue and profit per share since {E(rev_hist[0][0])}, both indexed to 100">
+        {grid}
+        <path d="{path(ei)}" fill="none" stroke="#5FD69B" stroke-width="2.2"
+          stroke-linejoin="round" stroke-linecap="round"/>
+        <path d="{path(ri)}" fill="none" stroke="#A98BFF" stroke-width="2.6"
+          stroke-linejoin="round" stroke-linecap="round"/>
+        {dots}{labels}
+      </svg></div>''', unsafe_allow_html=True)
+    st.caption("Both lines start at 100 so they can be compared. Where profit per share "
+               "outpaces revenue the company is keeping more of what it sells; where it "
+               "lags, costs or the share count are growing faster than the business.")
 
 # --------------------------------------------------------------------------
 # 03 this year so far
