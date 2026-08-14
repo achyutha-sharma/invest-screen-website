@@ -1,1177 +1,606 @@
 """
-Value Screen — research a stock from its SEC filings.
+Offline checks for the equity layer. No network needed.
 
-Every figure on this page comes from a filing. Share price is the one exception
-and is optional: without a feed, the valuation rows say so and the other eight
-sections carry on unchanged.
-
-Run with: streamlit run app.py
+Run:  python3 test_equity.py
 """
 
-import html
-import os
-
-import streamlit as st
-
-from filing_text import latest_filings, read_filing
-from prices import PriceClient
-from quiz import build as quiz_build, grade as quiz_grade, pick as quiz_pick
-from scorecard import score
-from sec_equity import extract_equity, pe_history, value
-from sec_ratios import SecClient
-
-st.set_page_config(page_title="Value Screen", page_icon="📈", layout="centered")
-
-E = html.escape
-D = "&#36;"          # for markdown, where Streamlit reads bare $ as LaTeX
-DH = "$"            # plain markdown only; HTML blocks must use D
-
-# --------------------------------------------------------------------------
-# Look
-# --------------------------------------------------------------------------
-# Deep violet ground, lifted surfaces, one lilac accent. Green and coral are
-# reserved for direction -- nothing decorative is allowed to use them.
-
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
-:root{
-  --bg:#131029; --bg-2:#1A1636; --surf:#201B42; --surf-2:#282152;
-  --line:#332B60; --line-2:#3D3470;
-  --text:#EDEAF7; --text-2:#B3ACD1; --text-3:#7F779E;
-  --acc:#A98BFF; --acc-2:#C7B2FF; --acc-dim:#6E5AB8;
-  --teach:#4FC98C; --teach-2:#7FE0B0; --teach-dim:#2E7A55;
-  --up:#5FD69B; --up-bg:#16341F; --down:#FF7B8A; --down-bg:#3A1A25;
-  --warn:#F0C46A; --warn-bg:#3A2E17;
-  --c1:#A98BFF; --c2:#5FD69B; --c3:#F0C46A; --c4:#6FC6E8; --c5:#FF9BB0;
-  --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
-}
-.stApp{background:
-  radial-gradient(1100px 620px at 12% -8%, #2A2159 0%, transparent 62%),
-  radial-gradient(900px 520px at 96% 4%, #22284F 0%, transparent 58%), var(--bg);
-  background-attachment:fixed}
-html,body,[class*="css"],.stApp,p,span,div,label{
-  font-family:'Archivo',system-ui,-apple-system,sans-serif; color:var(--text)}
-.block-container{max-width:880px;padding-top:2.4rem;padding-bottom:4rem}
-h1,h2,h3,h4{color:var(--text);letter-spacing:-.02em}
-
-/* masthead */
-.mast{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;
-  border-bottom:1px solid var(--line);padding-bottom:.9rem;margin-bottom:1.4rem}
-.logo{display:grid;place-items:center;width:32px;height:32px;border-radius:9px;
-  background:linear-gradient(150deg,var(--acc),#7B5FE0);color:#15112B;font-weight:800;
-  font-size:.76rem;box-shadow:0 4px 16px -4px rgba(169,139,255,.6)}
-.mark{font-size:1.18rem;font-weight:700}
-.mark span{color:var(--acc)}
-.hero{font-size:2.05rem;font-weight:800;letter-spacing:-.035em;line-height:1.14;
-  margin:0 0 .6rem;max-width:19ch}
-.hero em{font-style:normal;background:linear-gradient(180deg,transparent 60%,rgba(169,139,255,.32) 60%)}
-.sub{font-size:1rem;color:var(--text-2);max-width:54ch;margin:0 0 1.4rem}
-
-/* company head */
-.tk{font-family:var(--mono);font-size:.7rem;font-weight:700;letter-spacing:.06em;
-  color:var(--acc);background:rgba(169,139,255,.13);border:1px solid var(--acc-dim);
-  padding:.22rem .5rem;border-radius:4px}
-h2.co{margin:.55rem 0 .3rem;font-size:1.8rem;font-weight:800}
-.one{font-size:.96rem;color:var(--text-2);max-width:62ch;margin:0}
-
-/* headline strip */
-.five{display:grid;grid-template-columns:repeat(6,1fr);gap:1px;margin-top:1.3rem;
-  background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
-@media (max-width:900px){.five{grid-template-columns:repeat(3,1fr)}}
-@media (max-width:520px){.five{grid-template-columns:repeat(2,1fr)}}
-.fv{background:var(--surf);padding:.9rem .95rem}
-.fv .k{display:block;font-size:.58rem;letter-spacing:.11em;text-transform:uppercase;
-  color:var(--text-3);font-weight:700;margin-bottom:.3rem;line-height:1.3}
-.fv .v{display:block;font-family:var(--mono);font-size:1.28rem;font-weight:700;
-  letter-spacing:-.025em;color:#FFFFFF}
-.fv .v.good{color:var(--up)} .fv .v.watch{color:var(--warn)} .fv .v.weak{color:var(--down)}
-.fv .v.dim{color:var(--text-3);font-size:.9rem}
-.fv .d{display:block;font-size:.7rem;color:var(--text-2);margin-top:.35rem;line-height:1.45}
-
-/* section heads */
-.sh{display:flex;align-items:baseline;gap:.7rem;margin:2rem 0 .75rem}
-.sh .n{font-family:var(--mono);font-size:.62rem;font-weight:700;color:var(--acc);letter-spacing:.12em}
-.sh h3{font-size:1rem;font-weight:700;margin:0}
-.sh .note{margin-left:auto;font-size:.71rem;color:var(--text-3);font-family:var(--mono)}
-.panel{background:var(--surf);border:1px solid var(--line);border-radius:10px;padding:1.1rem 1.15rem}
-
-/* income flow */
-.frow{display:flex;align-items:center;gap:.85rem;margin-bottom:.55rem}
-.frow:last-child{margin-bottom:0}
-.flab{font-size:.83rem;color:var(--text-2);flex:0 0 150px}
-.flab b{color:var(--text);font-weight:600;display:block;font-size:.86rem}
-.flab i{font-style:normal;font-size:.69rem;color:var(--text-3)}
-.fbar{flex:1;height:24px;border-radius:5px;background:var(--line);overflow:hidden}
-.fbar div{height:100%}
-.famt{font-family:var(--mono);font-size:.86rem;font-weight:700;flex:0 0 82px;
-  text-align:right;color:#FFFFFF}
-@media (max-width:560px){.flab{flex:0 0 104px}.famt{flex:0 0 66px;font-size:.78rem}}
-
-/* quarters */
-.qrow{display:grid;grid-template-columns:repeat(4,1fr);gap:.55rem}
-@media (max-width:600px){.qrow{grid-template-columns:repeat(2,1fr)}}
-.qc{border:1px solid var(--line);border-radius:8px;padding:.7rem .75rem;background:var(--bg-2)}
-.qc.pending{border-style:dashed;opacity:.55}
-.qc .ql{font-family:var(--mono);font-size:.62rem;color:var(--text-3);font-weight:700;display:block}
-.qc .qv{font-family:var(--mono);font-size:1.02rem;font-weight:700;display:block;
-  margin-top:.3rem;color:#FFFFFF}
-.qc .qv.up{color:var(--up)} .qc .qv.down{color:var(--down)}
-.qc .qs{font-size:.67rem;color:var(--text-3);display:block;margin-top:.15rem}
-.runrate{display:flex;gap:.7rem;margin-top:1rem;padding:.8rem .95rem;
-  background:rgba(169,139,255,.08);border:1px solid var(--acc-dim);border-radius:8px;
-  font-size:.88rem;color:var(--text-2)}
-.runrate b{color:#FFFFFF}
-
-/* chart */
-.chart svg{display:block;width:100%;height:auto}
-.ckey{display:flex;gap:1.1rem;font-family:var(--mono);font-size:.67rem;margin-bottom:.4rem}
-.ckey span{display:flex;align-items:center;gap:.4rem;color:var(--text-2)}
-.ln{width:15px;height:2.5px;border-radius:2px;display:inline-block}
-.cfoot{font-size:.77rem;color:var(--text-3);margin:.6rem 0 0;max-width:72ch}
-
-/* scorecard */
-.stars{display:flex;align-items:center;gap:.9rem;flex-wrap:wrap;margin-bottom:.5rem}
-.sdots{display:flex;gap:.35rem}
-.sd{width:20px;height:20px;border-radius:50%;background:var(--line)}
-.sd.on{background:var(--acc);box-shadow:0 0 14px -3px var(--acc)}
-.sd.half{background:linear-gradient(90deg,var(--acc) 50%,var(--line) 50%)}
-.sval{font-family:var(--mono);font-size:1.9rem;font-weight:700;color:#FFFFFF}
-.sverd{font-size:1rem;font-weight:700;margin-left:auto}
-.crow{display:flex;gap:.8rem;padding:.75rem 0;border-top:1px solid var(--line)}
-.cpip{width:8px;height:8px;border-radius:50%;flex:0 0 8px;margin-top:.45rem}
-.cpip.good{background:var(--up)} .cpip.mid{background:var(--warn)} .cpip.bad{background:var(--down)}
-.cmain b{display:block;font-size:.87rem;font-weight:700;margin-bottom:.12rem;color:#FFFFFF}
-.cmain span{font-size:.84rem;color:var(--text-2);line-height:1.55}
-.cmain span b{display:inline;color:#FFFFFF}
-.cscore{font-family:var(--mono);font-size:.79rem;font-weight:700;color:var(--text-3);margin-left:auto}
-.sfoot{background:rgba(240,196,106,.08);border:1px solid #4E3E1E;border-radius:8px;
-  padding:.8rem .95rem;margin-top:1rem;font-size:.85rem;color:var(--text-2);line-height:1.6}
-.sfoot b{color:var(--warn)}
-.skip{font-size:.79rem;color:var(--text-3);margin-top:.8rem}
-
-/* notes */
-.note-list p{position:relative;padding:.5rem 0 .5rem 1.25rem;margin:0;font-size:.85rem;
-  color:var(--text-2);border-bottom:1px solid var(--line)}
-.note-list p:last-child{border-bottom:0}
-.note-list p::before{content:"";position:absolute;left:.3rem;top:1.05em;width:5px;height:5px;
-  border-radius:50%;background:var(--text-3)}
-.disc{font-size:.77rem;color:var(--text-3);margin-top:2rem;border-top:1px solid var(--line);
-  padding-top:1rem;max-width:70ch}
+from sec_equity import (
+    FIELDS,
+    Equity,
+    extract_equity,
+    pe_history,
+    value,
+)
 
 
-/* mode toggle */
-.modes{display:inline-flex;gap:.25rem;margin:1.2rem 0 .2rem;padding:.25rem;background:var(--surf);
-  border:1px solid var(--line-2);border-radius:9px}
-/* teach */
-.gbar{display:flex;gap:.4rem;margin:1.3rem 0 1.2rem}
-.gs{flex:1;height:5px;border-radius:3px;background:var(--line-2)}
-.gs.done,.gs.now{background:var(--acc)}
-.gnum{font-family:var(--mono);font-size:.63rem;font-weight:700;letter-spacing:.12em;color:var(--acc)}
-.gtitle{font-size:1.5rem;font-weight:800;letter-spacing:-.03em;margin:.35rem 0 1rem;max-width:22ch}
-.lead{font-size:1.06rem;color:var(--text);max-width:52ch;line-height:1.6;margin:0 0 1.1rem}
-.lead b{font-weight:700;color:#FFFFFF}
-.big{font-family:var(--mono);font-size:2.8rem;font-weight:700;letter-spacing:-.035em;
-  line-height:1;display:block;margin:.1rem 0 .4rem;color:#FFFFFF}
-.big.up{color:var(--up)} .big.down{color:var(--down)}
-.bigsub{font-size:.94rem;color:var(--text-2);margin:0 0 1.2rem;max-width:50ch}
-.bigsub b{color:#FFFFFF}
-.split2{display:flex;height:32px;border-radius:7px;overflow:hidden;background:var(--line)}
-.split2 div{height:100%}
-.skey{display:flex;flex-wrap:wrap;gap:1rem;margin-top:.65rem}
-.skey span{display:flex;align-items:center;gap:.4rem;font-size:.84rem;color:var(--text-2)}
-.skey i{width:11px;height:11px;border-radius:3px;display:inline-block}
-.skey b{font-family:var(--mono);font-weight:700;color:#FFFFFF}
-.gloss{border:1px solid var(--line);border-radius:9px;overflow:hidden}
-.gl{padding:.9rem 1rem;border-bottom:1px solid var(--line)}
-.gl:last-child{border-bottom:0}
-.gl .t{display:flex;align-items:baseline;gap:.7rem}
-.gl .t b{font-size:.95rem;font-weight:700;color:#FFFFFF}
-.gl .t i{font-style:normal;font-size:.78rem;color:var(--text-3)}
-.gl .t span{margin-left:auto;font-family:var(--mono);font-size:1rem;font-weight:700;color:#FFFFFF}
-.gl p{margin:.45rem 0 0;font-size:.85rem;color:var(--text-2);line-height:1.6;max-width:62ch}
-.gl p b{color:#FFFFFF}
-.finish{background:rgba(169,139,255,.08);border:1px solid var(--acc-dim);border-radius:9px;
-  padding:1.15rem 1.25rem;margin-top:1.2rem}
-.finish h4{margin:0 0 .5rem;font-size:1rem;color:#FFFFFF}
-.finish p{margin:0;font-size:.9rem;color:var(--text-2);max-width:56ch}
+def dur(start, end, val, form="10-K", filed="2026-02-01"):
+    return {"start": start, "end": end, "val": val, "form": form, "filed": filed}
 
 
-/* quotes, risks, peers, filings */
-.quote p{margin:0 0 .6rem;font-size:.92rem;color:var(--text-2);line-height:1.68}
-.quote p:last-of-type{margin-bottom:0}
-.quote .src{display:block;font-family:var(--mono);font-size:.68rem;color:var(--text-3);
-  margin-top:.8rem;font-weight:600}
-.risk .rr{padding:.7rem 0;border-bottom:1px solid var(--line);font-size:.9rem;color:var(--text-2)}
-.risk .rr:first-child{padding-top:0} .risk .rr:last-child{border-bottom:0;padding-bottom:0}
-.comp{width:100%;border-collapse:collapse}
-.comp th{font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-3);
-  font-weight:700;padding:.55rem .7rem;text-align:right;border-bottom:1px solid var(--line)}
-.comp th:first-child{text-align:left}
-.comp td{padding:.6rem .7rem;text-align:right;font-family:var(--mono);font-size:.9rem;
-  font-weight:700;color:#FFFFFF;border-bottom:1px solid var(--line)}
-.comp tr:last-child td{border-bottom:0}
-.comp td:first-child{text-align:left;font-family:'Archivo',sans-serif}
-.comp tr.self td{background:rgba(169,139,255,.09)}
-.comp tr.self td:first-child{color:var(--acc)}
-.feed{list-style:none;margin:0;padding:0}
-.feed li{display:flex;gap:.8rem;padding:.7rem 0;border-bottom:1px solid var(--line);
-  align-items:baseline}
-.feed li:first-child{padding-top:0} .feed li:last-child{border-bottom:0;padding-bottom:0}
-.ftype{font-family:var(--mono);font-size:.61rem;font-weight:700;padding:.22rem .42rem;
-  border-radius:4px;flex:0 0 auto}
-.ftype.q{background:rgba(111,198,232,.15);color:#6FC6E8}
-.ftype.k{background:rgba(169,139,255,.15);color:var(--acc)}
-.ftype.e{background:rgba(95,214,155,.13);color:var(--up)}
-.ftype.o{background:rgba(240,196,106,.13);color:var(--warn)}
-.fmain{flex:1;min-width:0;font-size:.89rem}
-.fmain a{color:var(--text-2);text-decoration:none}
-.fmain a:hover{color:var(--acc);text-decoration:underline}
-.fwhen{font-family:var(--mono);font-size:.7rem;color:var(--text-3);flex:0 0 auto}
-.day{display:inline-flex;align-items:center;gap:.3rem;font-family:var(--mono);font-size:.72rem;
-  font-weight:700;padding:.22rem .5rem;border-radius:5px;margin-left:.5rem}
-.day.good{background:var(--up-bg);color:var(--up);border:1px solid #22502F}
-.day.weak{background:var(--down-bg);color:var(--down);border:1px solid #562733}
-.fv .learn{display:block;font-size:.63rem;font-weight:700;color:var(--acc);margin-top:.4rem}
-.stSlider label{color:var(--text-2) !important;font-size:.85rem !important;font-weight:600 !important}
+def inst(end, val, form="10-K", filed="2026-02-01"):
+    return {"end": end, "val": val, "form": form, "filed": filed}
 
 
-.picker{font-size:.66rem;letter-spacing:.13em;text-transform:uppercase;color:var(--text-3);
-  font-weight:700;margin:1.4rem 0 .6rem}
-.trio{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-top:2.2rem;
-  padding-top:1.5rem;border-top:1px solid var(--line)}
-@media (max-width:640px){.trio{grid-template-columns:1fr;gap:1.1rem}}
-.tr b{display:block;font-size:.9rem;margin-bottom:.2rem;color:#FFFFFF}
-.tr span{font-size:.83rem;color:var(--text-2);line-height:1.5}
+def units(**kw):
+    return {"units": {k.replace("_", "/"): v for k, v in kw.items()}}
 
 
-/* ---- mode toggle: a segmented control, not radio circles ---------------- */
-div[role="radiogroup"]{gap:.25rem !important;padding:.25rem;background:var(--surf);
-  border:1px solid var(--line-2);border-radius:9px;display:inline-flex !important;
-  margin:1.1rem 0 .2rem}
-div[role="radiogroup"] > label{margin:0 !important;padding:.45rem 1.05rem !important;
-  border-radius:6px;cursor:pointer;transition:all .15s;background:transparent}
-div[role="radiogroup"] > label:hover{background:var(--surf-2)}
-/* hide the circle itself */
-div[role="radiogroup"] > label > div:first-child{display:none !important}
-div[role="radiogroup"] > label p{font-size:.87rem !important;font-weight:600 !important;
-  color:var(--text-3) !important;margin:0 !important}
-div[role="radiogroup"] > label:has(input:checked){background:var(--teach)}
-div[role="radiogroup"] > label:has(input:checked) p{color:#0F1F17 !important;font-weight:700 !important}
-
-/* ---- teach mode is green; research stays violet ------------------------ */
-.teach .gbar .gs.done, .teach .gbar .gs.now{background:var(--teach)}
-.teach .gnum{color:var(--teach)}
-.teach .lead b{color:var(--teach-2)}
-.teach .big{color:var(--teach-2)}
-.teach .big.up{color:var(--up)} .teach .big.down{color:var(--down)}
-.teach .gl .t b{color:#FFFFFF}
-.teach .gl .t span{color:var(--teach-2)}
-.teach .picker{color:var(--teach)}
-.teach .finish{background:rgba(95,214,155,.09);border-color:var(--teach-dim)}
-.teach .finish h4{color:var(--teach-2)}
-.teach div[data-testid="stExpander"]{border-color:var(--teach-dim) !important}
-.teach div[data-testid="stExpander"] summary:hover{color:var(--teach-2) !important}
-.teach .stSlider [data-baseweb="slider"] [role="slider"]{background:var(--teach) !important;
-  box-shadow:0 2px 10px -2px rgba(95,214,155,.8) !important}
-.teach .stSlider [data-baseweb="slider"] div[data-testid="stSliderTickBar"]{color:var(--text-3)}
-.teach .btn-next button{background:var(--teach) !important;border-color:var(--teach) !important;
-  color:#0F1F17 !important}
+def build(name, tags):
+    return {"entityName": name, "facts": {"us-gaap": tags}}
 
 
-/* the glossary links read as the bottom row of the strip, not as controls */
-.five{border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom:0}
-div[data-testid="stHorizontalBlock"]:has(button[kind]) .stButton button{
-  background:var(--surf);border:1px solid var(--line);border-top:0;border-radius:0;
-  color:var(--acc);font-size:.62rem;font-weight:700;padding:.45rem .3rem;
-  letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-div[data-testid="stHorizontalBlock"]:has(button[kind]) .stButton button:hover{
-  background:var(--surf-2);color:var(--acc-2)}
-div[data-testid="stHorizontalBlock"]{gap:1px !important}
+# ---------------------------------------------------------------------------
+# A well-behaved filer: ten years, everything tagged.
+# ---------------------------------------------------------------------------
+def make_clean():
+    rev, ni, eps, dps, sh, ocf, capex, gp, ebit, da, bb, debt, csh = ([] for _ in range(13))
+    for i in range(10):
+        y = 2017 + i
+        s, e = f"{y}-01-01", f"{y}-12-31"
+        rev.append(dur(s, e, 10_000 + 800 * i))
+        ni.append(dur(s, e, 900 + 90 * i))
+        gp.append(dur(s, e, 4_200 + 340 * i))
+        ebit.append(dur(s, e, 1_400 + 120 * i))
+        da.append(dur(s, e, 300 + 12 * i))
+        ocf.append(dur(s, e, 1_500 + 130 * i))
+        capex.append(dur(s, e, 400 + 10 * i))
+        bb.append(dur(s, e, 500 + 40 * i))
+        eps.append(dur(s, e, round(1.80 + 0.22 * i, 2)))
+        dps.append(dur(s, e, round(0.50 + 0.08 * i, 2)))
+        sh.append(dur(s, e, 500 - 8 * i))
+        debt.append(inst(e, 2_000 + 50 * i))
+        csh.append(inst(e, 1_200 + 90 * i))
+    return build("CLEAN INDUSTRIAL CORP", {
+        "Revenues": {"units": {"USD": rev}},
+        "NetIncomeLoss": {"units": {"USD": ni}},
+        "GrossProfit": {"units": {"USD": gp}},
+        "OperatingIncomeLoss": {"units": {"USD": ebit}},
+        "DepreciationDepletionAndAmortization": {"units": {"USD": da}},
+        "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": ocf}},
+        "PaymentsToAcquirePropertyPlantAndEquipment": {"units": {"USD": capex}},
+        "PaymentsForRepurchaseOfCommonStock": {"units": {"USD": bb}},
+        "EarningsPerShareDiluted": {"units": {"USD/shares": eps}},
+        "CommonStockDividendsPerShareDeclared": {"units": {"USD/shares": dps}},
+        "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": sh}},
+        "LongTermDebtNoncurrent": {"units": {"USD": debt}},
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": csh}},
+    })
 
 
-.comp td:first-child{font-weight:700;font-size:.95rem}
-.comp .mini{font-family:var(--mono);font-size:.72rem;font-weight:700;margin-left:.5rem}
-.comp .mini.up{color:var(--up)} .comp .mini.down{color:var(--down)}
-.comp tr.self td:first-child{color:var(--acc)}
-.comp tbody tr:hover td{background:rgba(169,139,255,.05)}
-.comp td{padding:.75rem .9rem}
-.comp th{padding:.65rem .9rem}
+def test_clean():
+    eq = extract_equity(make_clean(), cik="0000000001")
+    assert eq.entity == "CLEAN INDUSTRIAL CORP"
+    assert len(eq.years) == 10
+    assert eq.years[0].label == "FY2017" and eq.years[-1].label == "FY2026"
+
+    last = eq.latest
+    assert last.get("revenue") == 17_200
+    assert last.get("eps") == 3.78, last.get("eps")
+    assert last.get("dps") == 1.22, last.get("dps")
+    assert last.get("shares") == 428
+    assert last.get("total_debt") == 2_450
+    assert last.get("cash") == 2_010
+    assert last.get("gross_profit") == 7_260
+    assert not last.missing(), last.missing()
+
+    # Ten-year series, oldest first, for the chart.
+    eps_series = eq.series("eps")
+    assert len(eps_series) == 10
+    assert eps_series[0] == ("FY2017", 1.80)
+    assert eps_series[-1][1] > eps_series[0][1]
+    print("clean filer ok")
 
 
-/* quiz */
-.qq{margin:1.3rem 0 .5rem}
-.qq .qn{font-family:var(--mono);font-size:.62rem;font-weight:700;letter-spacing:.12em;
-  color:var(--acc);text-transform:uppercase}
-.qq p{margin:.3rem 0 0;font-size:1rem;color:var(--text);max-width:60ch;line-height:1.55}
-.qa{border-radius:8px;padding:.85rem 1rem;margin:.5rem 0 .3rem;font-size:.88rem;
-  line-height:1.62;max-width:66ch}
-.qa.right{background:rgba(95,214,155,.09);border:1px solid #22502F;color:var(--text-2)}
-.qa.right b{color:var(--up)}
-.qa.wrong{background:rgba(240,196,106,.08);border:1px solid #4E3E1E;color:var(--text-2)}
-.qa.wrong b{color:var(--warn)}
-.qa b{font-weight:700}
-.qscore{background:rgba(169,139,255,.08);border:1px solid var(--acc-dim);border-radius:10px;
-  padding:1.2rem 1.3rem;margin-top:1.4rem}
-.qscore .big{font-size:2.6rem}
-.qscore .big.warn{color:var(--warn)}
-.qscore .bigsub{margin:.3rem 0 0}
-.qscore .bigsub b{color:#FFFFFF}
+def test_valuation():
+    eq = extract_equity(make_clean())
+    v = value(eq, price=68.00, day_change_pct=-1.4)
+    assert v.available
+    assert round(v.pe, 2) == round(68 / 3.78, 2)
+    assert round(v.dividend_yield, 2) == round(100 * 1.22 / 68, 2)
+    assert round(v.earnings_yield, 2) == round(100 * 3.78 / 68, 2)
+    assert v.market_cap == 68 * 428
+    assert v.day_change_pct == -1.4
+
+    # No price: everything price-dependent goes quiet, nothing raises.
+    n = value(eq, price=None)
+    assert not n.available
+    assert n.pe is None and n.dividend_yield is None and n.market_cap is None
+
+    # P/E history skips years without a price, and loss years.
+    hist = pe_history(eq, {"FY2017": 30.0, "FY2026": 68.0})
+    assert [h[0] for h in hist] == ["FY2017", "FY2026"]
+    assert round(hist[0][1], 2) == round(30 / 1.80, 2)
+    print("valuation ok")
 
 
-/* the link row is the bottom of each card, aligned to it exactly */
-.nolink{height:100%;min-height:2.1rem;background:var(--surf);border:1px solid var(--line);
-  border-top:0;border-radius:0 0 0 10px}
-div[data-testid="stHorizontalBlock"]:has(button[kind]) .stButton button{
-  height:2.1rem;min-height:2.1rem}
-div[data-testid="stHorizontalBlock"]:has(button[kind])
-  div[data-testid="stColumn"]:last-child .stButton button{border-radius:0 0 10px 0}
+# ---------------------------------------------------------------------------
+# A messier filer: no diluted EPS, no share count, no gross profit tag.
+# ---------------------------------------------------------------------------
+def test_derivation():
+    payload = build("SPARSE CO", {
+        "Revenues": {"units": {"USD": [dur("2026-01-01", "2026-12-31", 8_000)]}},
+        "NetIncomeLoss": {"units": {"USD": [dur("2026-01-01", "2026-12-31", 640)]}},
+        "CostOfRevenue": {"units": {"USD": [dur("2026-01-01", "2026-12-31", 5_200)]}},
+        "OperatingIncomeLoss": {"units": {"USD": [dur("2026-01-01", "2026-12-31", 1_100)]}},
+        # Only basic EPS, and no share count at all.
+        "EarningsPerShareBasic": {"units": {"USD/shares": [dur("2026-01-01", "2026-12-31", 2.00)]}},
+    })
+    eq = extract_equity(payload)
+    last = eq.latest
+
+    assert last.get("eps") == 2.00
+    assert "Basic" in last.sources["eps"]
+    # Shares rebuilt from profit ÷ EPS, and labelled as rebuilt.
+    assert last.get("shares") == 320, last.get("shares")
+    assert last.sources["shares"].startswith("derived")
+    # Gross profit rebuilt from revenue less cost of revenue.
+    assert last.get("gross_profit") == 2_800
+    assert last.sources["gross_profit"].startswith("derived")
+
+    assert any("rebuilt from other figures" in n for n in eq.notes), eq.notes
+    assert any("basic EPS is shown" in n for n in eq.notes), eq.notes
+    print("derivation ok")
 
 
-/* three-year table */
-.years{width:100%;border-collapse:collapse}
-.years th{font-size:.6rem;letter-spacing:.11em;text-transform:uppercase;color:var(--text-3);
-  font-weight:700;padding:.55rem .7rem;text-align:right;border-bottom:1px solid var(--line)}
-.years th:first-child{text-align:left}
-.years td{padding:.65rem .7rem;text-align:right;font-family:var(--mono);font-size:.92rem;
-  font-weight:700;color:#FFFFFF;border-bottom:1px solid var(--line)}
-.years tr:last-child td{border-bottom:0}
-.years td.mname{text-align:left;font-family:'Archivo',sans-serif;min-width:150px}
-.years td.mname b{display:block;font-size:.88rem;color:#FFFFFF}
-.years td.mname i{display:block;font-style:normal;font-size:.7rem;color:var(--text-3);
-  font-weight:400;margin-top:.1rem}
-.years td.tcol{min-width:74px}
-.years tbody tr:hover td{background:rgba(169,139,255,.05)}
-.trend{font-family:var(--mono);font-size:.8rem;font-weight:700}
-.trend.up{color:var(--up)} .trend.down{color:var(--down)} .trend.flat{color:var(--text-3)}
-.qc .qv.up{color:var(--up)} .qc .qv.down{color:var(--down)}
-.qc .qs.up{color:var(--up)} .qc .qs.down{color:var(--down)}
+# ---------------------------------------------------------------------------
+# Quarterly progress through the current year.
+# ---------------------------------------------------------------------------
+def test_quarters():
+    tags = {
+        "Revenues": {"units": {"USD": [
+            dur("2025-01-01", "2025-12-31", 16_000),
+            # Three quarters of the new year, filed on 10-Qs.
+            dur("2026-01-01", "2026-03-31", 4_100, form="10-Q", filed="2026-05-01"),
+            dur("2026-04-01", "2026-06-30", 4_300, form="10-Q", filed="2026-08-01"),
+            dur("2026-07-01", "2026-09-30", 4_500, form="10-Q", filed="2026-11-01"),
+        ]}},
+        "NetIncomeLoss": {"units": {"USD": [
+            dur("2025-01-01", "2025-12-31", 1_600),
+            dur("2026-01-01", "2026-03-31", 400, form="10-Q", filed="2026-05-01"),
+            dur("2026-04-01", "2026-06-30", 430, form="10-Q", filed="2026-08-01"),
+            dur("2026-07-01", "2026-09-30", 450, form="10-Q", filed="2026-11-01"),
+        ]}},
+        "EarningsPerShareDiluted": {"units": {"USD/shares": [
+            dur("2025-01-01", "2025-12-31", 3.20),
+            dur("2026-01-01", "2026-03-31", 0.80, form="10-Q", filed="2026-05-01"),
+            dur("2026-04-01", "2026-06-30", 0.86, form="10-Q", filed="2026-08-01"),
+            dur("2026-07-01", "2026-09-30", 0.90, form="10-Q", filed="2026-11-01"),
+        ]}},
+    }
+    eq = extract_equity(build("QUARTERLY CO", tags))
 
-/* streamlit widgets */
-.stTextInput input{background:var(--surf) !important;color:var(--text) !important;
-  border:1px solid var(--line-2) !important;border-radius:8px !important;
-  font-size:1rem !important;padding:.8rem 1rem !important}
-.stTextInput input:focus{border-color:var(--acc) !important;
-  box-shadow:0 0 0 3px rgba(169,139,255,.18) !important}
-.stTextInput label{color:var(--text-3) !important;font-size:.66rem !important;
-  letter-spacing:.13em !important;text-transform:uppercase !important;font-weight:700 !important}
-.stButton button{background:var(--surf);color:var(--text-2);border:1px solid var(--line-2);
-  border-radius:20px;font-weight:600;font-size:.86rem;padding:.35rem .9rem}
-.stButton button:hover{border-color:var(--acc);color:var(--acc)}
-div[data-testid="stExpander"]{border-color:var(--line) !important;background:var(--surf)}
-div[data-testid="stExpander"] summary{color:var(--text) !important}
-.stSelectbox div[data-baseweb="select"]>div{background:var(--surf);border-color:var(--line-2)}
-</style>
-""", unsafe_allow_html=True)
+    assert len(eq.years) == 1 and eq.years[0].label == "FY2025"
+    assert len(eq.quarters) == 3, [q.label for q in eq.quarters]
+    assert [q.fp for q in eq.quarters] == ["Q1", "Q2", "Q3"]
+    assert eq.quarters[0].get("revenue") == 4_100
+    assert eq.quarters[2].get("eps") == 0.90
+    assert eq.quarters[1].get("net_income") == 430
 
-st.markdown('<div class="mast"><span class="logo">VS</span>'
-            '<span class="mark">Value<span>Screen</span></span></div>',
-            unsafe_allow_html=True)
+    # The run-rate the page shows: arithmetic, not a forecast.
+    ytd = sum(q.get("revenue") for q in eq.quarters)
+    run_rate = ytd / len(eq.quarters) * 4
+    assert ytd == 12_900
+    assert round(run_rate) == 17_200
+    assert run_rate > eq.years[-1].get("revenue")      # ahead of last year
 
-user_agent = os.environ.get("SEC_USER_AGENT")
-if not user_agent:
-    st.error("Set SEC_USER_AGENT to your name and email. The SEC turns away "
-             "requests that do not identify the caller.")
-    st.stop()
-
-client = SecClient(user_agent=user_agent)
-prices = PriceClient(api_key=os.environ.get("FINNHUB_API_KEY", ""))
+    assert any("quarter(s) of the current year" in n for n in eq.notes)
+    print("quarters ok")
 
 
-@st.cache_data(show_spinner=False)
-def search(q: str):
-    return client.search(q)
-
-
-@st.cache_data(show_spinner=False)
-def facts(cik: str):
-    return client.company_facts(cik)
-
-
-@st.cache_data(show_spinner=False)
-def profile(cik: str):
-    return client.company_profile(cik)
-
-
-@st.cache_data(show_spinner=False, ttl=600)
-def quote(ticker: str):
-    return prices.quote(ticker)
-
-
-@st.cache_data(show_spinner=False, ttl=86_400)
-def fiscal_prices(ticker: str, ends: tuple):
-    return prices.at_fiscal_ends(ticker, list(ends))
-
-
-@st.cache_data(show_spinner=False, ttl=86_400)
-def filings(cik: str):
-    return latest_filings(client, cik, limit=8)
-
-
-@st.cache_data(show_spinner=False, ttl=86_400)
-def prose(cik: str):
-    """Filing text is best-effort: when a section cannot be read, the page
-    simply does not show it rather than showing something wrong."""
+# ---------------------------------------------------------------------------
+# Guards.
+# ---------------------------------------------------------------------------
+def test_guards():
+    # A filer with nothing usable must raise clearly, not return an empty shell.
     try:
-        return read_filing(client, cik)
-    except Exception:
-        return None
+        extract_equity(build("EMPTY CO", {}))
+        raise AssertionError("expected ValueError for a filer with no revenue")
+    except ValueError as e:
+        assert "revenue" in str(e).lower()
+
+    # Loss-making year: EPS is negative, so no P/E rather than a negative one.
+    payload = build("LOSS CO", {
+        "Revenues": {"units": {"USD": [dur("2026-01-01", "2026-12-31", 5_000)]}},
+        "NetIncomeLoss": {"units": {"USD": [dur("2026-01-01", "2026-12-31", -300)]}},
+        "EarningsPerShareDiluted": {"units": {"USD/shares": [dur("2026-01-01", "2026-12-31", -1.20)]}},
+        "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": [dur("2026-01-01", "2026-12-31", 250)]}},
+    })
+    eq = extract_equity(payload)
+    v = value(eq, price=14.00)
+    assert eq.latest.get("eps") == -1.20
+    assert v.pe is None, "a loss must not produce a P/E"
+    assert v.market_cap == 14 * 250
+    assert pe_history(eq, {"FY2026": 14.0}) == []
+
+    # Every field carries a professional label and a plain gloss.
+    for f in FIELDS:
+        assert f.label and f.gloss and f.label != f.gloss
+        assert len(f.gloss) < 60, f.gloss
+    print("guards ok")
 
 
-# --------------------------------------------------------------------------
-# Helpers
-# --------------------------------------------------------------------------
 
-def money(v, decimals=1, html=True):
-    """Human-scaled dollars: 46,300,000,000 -> $46.3bn.
 
-    html=True emits the &#36; entity. Streamlit reads a pair of bare dollar
-    signs as a LaTeX expression and eats every tag between them, so any figure
-    going into an unsafe_allow_html block must use the entity.
+# ---------------------------------------------------------------------------
+# Scorecard
+# ---------------------------------------------------------------------------
+def make_scorable(eps_growth=True, margin_up=True, cash_good=True, debt_low=True):
+    """A ten-year filer whose five components can be dialled up or down."""
+    rev, ni, eps, ocf, capex, debt, cash = ([] for _ in range(7))
+    for i in range(10):
+        y = 2017 + i
+        s, e = f"{y}-01-01", f"{y}-12-31"
+        r = 10_000 + 700 * i
+        m = (0.06 + 0.010 * i) if margin_up else (0.16 - 0.010 * i)
+        rev.append(dur(s, e, r))
+        ni.append(dur(s, e, round(r * m)))
+        base = 1.50 * (1.12 ** i) if eps_growth else 3.00 * (0.97 ** i)
+        eps.append(dur(s, e, round(base, 2)))
+        prof = r * m
+        ocf.append(dur(s, e, round(prof * (1.45 if cash_good else 0.85))))
+        capex.append(dur(s, e, round(prof * 0.35)))
+        debt.append(inst(f"{y}-12-31", 1_500 if debt_low else 22_000))
+        cash.append(inst(f"{y}-12-31", 3_000 if debt_low else 400))
+    return build("SCORABLE CO", {
+        "Revenues": {"units": {"USD": rev}},
+        "NetIncomeLoss": {"units": {"USD": ni}},
+        "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": ocf}},
+        "PaymentsToAcquirePropertyPlantAndEquipment": {"units": {"USD": capex}},
+        "LongTermDebtNoncurrent": {"units": {"USD": debt}},
+        "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": cash}},
+        "EarningsPerShareDiluted": {"units": {"USD/shares": eps}},
+        "WeightedAverageNumberOfDilutedSharesOutstanding":
+            {"units": {"shares": [dur(f"{2017+i}-01-01", f"{2017+i}-12-31", 500) for i in range(10)]}},
+    })
+
+
+def test_scorecard():
+    from scorecard import score
+    from sec_equity import value
+
+    strong = extract_equity(make_scorable())
+    eps_now = strong.latest.get("eps")
+    v = value(strong, price=eps_now * 18)
+    card = score(strong, v, pe_history=[20.0] * 10)
+
+    assert len(card.components) == 5, [c.name for c in card.components]
+    assert card.stars >= 4, (card.stars, [(c.name, c.score) for c in card.components])
+    assert card.verdict == "The filings look strong"
+    assert card.tone == "good"
+    # Every component explains itself in a sentence a reader can check.
+    for c in card.components:
+        assert c.why and len(c.why) > 25, c
+        assert c.tone in ("good", "mid", "bad")
+
+    weak = extract_equity(make_scorable(False, False, False, False))
+    wv = value(weak, price=weak.latest.get("eps") * 40)
+    wcard = score(weak, wv, pe_history=[18.0] * 10)
+    assert wcard.stars <= 1.5, (wcard.stars, [(c.name, c.score) for c in wcard.components])
+    assert wcard.verdict == "The filings look weak"
+
+    # No price: four components still score, the fifth is reported as skipped.
+    npc = score(strong, value(strong, price=None))
+    assert len(npc.components) == 4
+    assert any("no share price" in u for u in npc.unscored), npc.unscored
+    assert npc.stars > 0
+
+    # A loss-making filer must not be given a growth rate.
+    loss = extract_equity(build("LOSSY CO", {
+        "Revenues": {"units": {"USD": [dur(f"{2017+i}-01-01", f"{2017+i}-12-31", 5_000) for i in range(6)]}},
+        "NetIncomeLoss": {"units": {"USD": [dur(f"{2017+i}-01-01", f"{2017+i}-12-31", 200 - 90 * i) for i in range(6)]}},
+        "EarningsPerShareDiluted": {"units": {"USD/shares":
+            [dur(f"{2017+i}-01-01", f"{2017+i}-12-31", round(1.0 - 0.45 * i, 2)) for i in range(6)]}},
+    }))
+    lcard = score(loss, value(loss, price=12.0))
+    assert any("loss and profit" in u for u in lcard.unscored), lcard.unscored
+    assert not any(c.name == "Long-run growth" for c in lcard.components)
+
+    # Stars stay on the half-point grid and inside the range.
+    for card_ in (card, wcard, npc, lcard):
+        assert 0 <= card_.stars <= 5 and (card_.stars * 2) % 1 == 0, card_.stars
+    print("scorecard ok")
+
+
+# ---------------------------------------------------------------------------
+# Prices: the one source outside SEC. Must never raise.
+# ---------------------------------------------------------------------------
+def test_prices():
+    """The one source outside SEC. Must degrade, never raise."""
+    import pathlib, tempfile
+    from prices import PriceClient, Quote
+
+    tmp = pathlib.Path(tempfile.mkdtemp())
+
+    # No key configured: everything empty, with a reason attached.
+    nokey = PriceClient(api_key="", cache_dir=tmp)
+    assert not nokey.configured
+    q = nokey.quote("NKE")
+    assert not q.available and "No price feed" in q.problem
+    assert nokey.monthly("NKE") == []
+    assert nokey.at_fiscal_ends("NKE", [("FY2026", "2026-05-31")]) == {}
+
+    # Network down.
+    class Offline(PriceClient):
+        def _get(self, url, params):
+            return None, "The price feed could not be reached."
+
+    off = Offline(api_key="x", cache_dir=pathlib.Path(tempfile.mkdtemp()))
+    assert not off.quote("NKE").available
+    assert off.monthly("NKE") == []
+
+    # A well-formed Finnhub response.
+    class Fake(PriceClient):
+        def _get(self, url, params):
+            if "quote" in url:
+                return {"c": 62.0, "d": -1.34, "dp": -2.12, "pc": 63.34,
+                        "t": 1786000000}, ""
+            return {"s": "ok",
+                    "t": [1748563200, 1780099200, 1785283200],
+                    "c": [70.50, 63.40, 62.40]}, ""
+
+    f = Fake(api_key="x", cache_dir=pathlib.Path(tempfile.mkdtemp()))
+    fq = f.quote("NKE")
+    assert fq.available and fq.price == 62.0
+    assert fq.prev_close == 63.34
+    assert round(fq.day_change_pct, 2) == -2.12
+    assert fq.source == "Finnhub" and fq.as_of
+
+    hist = f.monthly("NKE")
+    assert len(hist) == 3 and hist[0][1] == 70.50
+
+    # Fiscal-year prices: near matches only, far-off years dropped.
+    got = f.at_fiscal_ends("NKE", [("FY2026", "2026-05-31"), ("FY2015", "2015-05-31")])
+    assert list(got) == ["FY2026"], got
+
+    # An unknown symbol comes back as zero, not an exception.
+    class Zero(PriceClient):
+        def _get(self, url, params):
+            return {"c": 0, "d": None, "dp": None, "pc": 0, "t": 0}, ""
+
+    z = Zero(api_key="x", cache_dir=pathlib.Path(tempfile.mkdtemp()))
+    zq = z.quote("ZZZZ")
+    assert not zq.available and "No price found" in zq.problem
+
+    # Rate limiting and a bad key are reported plainly.
+    class Limited(PriceClient):
+        def _get(self, url, params):
+            return None, "The price feed is rate limited; try again shortly."
+
+    assert "rate limited" in Limited(api_key="x", cache_dir=tmp).quote("NKE").problem
+    print("prices ok")
+
+
+FAKE_10K = """
+<html><body>
+<table><tr><td>Item 1. Business</td><td>3</td></tr>
+<tr><td>Item 1A. Risk Factors</td><td>12</td></tr>
+<tr><td>Item 7. Management's Discussion and Analysis</td><td>28</td></tr></table>
+
+<p>Item 1. Business</p>
+<p>We design and sell athletic footwear and apparel worldwide through our own
+stores, digital platforms and wholesale partners.</p>
+<p>Competition</p>
+<p>The athletic footwear industry is highly competitive. We compete with
+Adidas AG, Under Armour Inc. and Skechers USA Inc. on product design, price and
+brand strength, as well as with a range of smaller regional brands.</p>
+
+<p>Item 1A. Risk Factors</p>
+<p>Our business is affected by consumer discretionary spending</p>
+<p>A decline in consumer confidence may reduce demand for our products and
+adversely affect results of operations in any period.</p>
+<p>Excess inventory could require additional markdowns</p>
+<p>If we misjudge demand we may hold inventory that can only be sold at a
+discount, which would reduce gross margin.</p>
+<p>We depend on a limited number of manufacturing partners</p>
+<p>Item 1B. Unresolved Staff Comments</p>
+<p>None.</p>
+
+<p>Item 7. Management's Discussion and Analysis of Financial Condition</p>
+<p>Revenue decreased 4% in the period, primarily due to lower unit sales in
+Greater China and higher promotional activity across our wholesale channel.</p>
+<p>Gross margin declined 290 basis points, driven primarily by increased
+markdowns on excess inventory and unfavourable foreign currency movements.</p>
+<p>These decreases were partially offset by growth in our direct-to-consumer
+channel, which increased 6% over the prior year.</p>
+<p>The following discussion should be read together with the consolidated
+financial statements and the related notes appearing elsewhere in this report,
+and contains forward-looking statements that involve risks and uncertainties.
+Our fiscal year ends on May 31 of each year. References to fiscal years are to
+the twelve months ended on that date. Amounts are presented in millions except
+per share data, unless otherwise indicated. Percentage changes have been
+calculated using unrounded figures and may not recompute from the rounded
+amounts shown in the accompanying tables and discussion below.</p>
+<p>See Note 14 for further detail on segment results.</p>
+<p>Item 7A. Quantitative and Qualitative Disclosures About Market Risk</p>
+<p>We are exposed to interest rate risk.</p>
+</body></html>
+"""
+
+
+def test_filing_text():
+    from filing_text import extract_competitors, extract_mda, extract_risks, to_text
+
+    text = to_text(FAKE_10K)
+    assert "Item 7" in text and "<p>" not in text
+
+    mda, why = extract_mda(text)
+    assert not why and len(mda) >= 2, (why, mda)
+    assert any("Greater China" in s for s in mda), mda
+    assert any("partially offset" in s for s in mda), mda
+    # A cross-reference is not an explanation and must be dropped.
+    assert not any(s.startswith("See Note") for s in mda), mda
+    # Everything is verbatim: each sentence appears in the source.
+    flat = " ".join(text.split())
+    for s in mda:
+        assert s in flat, s
+
+    risks, why = extract_risks(text)
+    assert not why and len(risks) >= 2, (why, risks)
+    assert any("discretionary spending" in r for r in risks), risks
+    # Headings only -- the explanatory paragraphs end in a full stop.
+    for r in risks:
+        assert not r.endswith("."), r
+
+    peers, note, why = extract_competitors(text)
+    assert not why, why
+    assert "Adidas AG" in peers and "Under Armour Inc" in peers, peers
+    assert not any(p.lower().startswith("the ") for p in peers), peers
+    assert "competitive" in note.lower(), note
+
+    # A filing with none of these sections must say so, not guess.
+    empty = to_text("<html><body><p>" + "Nothing useful here. " * 200 + "</p></body></html>")
+    m, w1 = extract_mda(empty)
+    r, w2 = extract_risks(empty)
+    c, note2, w3 = extract_competitors(empty)
+    assert m == [] and r == [] and c == []
+    assert all(w and "could not be located" in w or "does not" in w for w in (w1, w2, w3))
+    print("filing text ok")
+
+
+
+
+def test_risk_junk_rejected():
+    """Financial-statement rows must never be mistaken for risk headings.
+
+    A real filing put Item 7A tables through the earlier version of this
+    parser and got back balance-sheet rows, so each of those shapes is now a
+    test case.
     """
-    if v is None:
-        return "—"
-    a = abs(v)
-    sign = "−" if v < 0 else ""
-    d = D if html else DH
-    if a >= 1e9:
-        return f"{sign}{d}{a / 1e9:.{decimals}f}bn"
-    if a >= 1e6:
-        return f"{sign}{d}{a / 1e6:.0f}m"
-    return f"{sign}{d}{a:,.0f}"
-
-
-def pct(v, dp=1):
-    return "—" if v is None else f"{'+' if v >= 0 else '−'}{abs(v):.{dp}f}%"
-
-
-_section_no = [0]
-
-
-def sh(title, note=""):
-    """Numbered section heading. Numbers are assigned as sections render, so a
-    company missing one does not leave a gap in the sequence."""
-    _section_no[0] += 1
-    st.markdown(
-        f'<div class="sh"><span class="n">{_section_no[0]:02d}</span><h3>{E(title)}</h3>'
-        + (f'<span class="note">{E(note)}</span>' if note else "") + "</div>",
-        unsafe_allow_html=True)
-
-
-def ratio(a, b):
-    return None if (a is None or not b) else a / b
-
-
-# --------------------------------------------------------------------------
-# Search
-# --------------------------------------------------------------------------
-
-if "cik" not in st.session_state:
-    st.markdown('<h1 class="hero">Research a stock <em>properly</em>.</h1>'
-                '<p class="sub">Straight from SEC filings.</p>', unsafe_allow_html=True)
-
-query = st.text_input("Company name or ticker", placeholder="Nike, Starbucks, Netflix").strip()
-
-if query:
-    try:
-        hits = search(query)
-    except Exception as e:
-        st.error(f"Could not reach the SEC: {e}")
-        st.stop()
-    if not hits:
-        st.warning(f"Nothing matches “{query}”. Only US companies that file with "
-                   "the SEC are covered — try a shorter name, or the ticker.")
-        st.stop()
-    chosen = hits[0] if len(hits) == 1 else st.selectbox(
-        "Which company?", hits, format_func=lambda m: f"{m['name']} · {m['ticker']}")
-    st.session_state["cik"] = chosen["cik"]
-    st.session_state["ticker"] = chosen["ticker"]
-    st.session_state["name"] = chosen["name"]
-
-if "cik" not in st.session_state:
-    st.stop()
-
-cik = st.session_state["cik"]
-ticker = st.session_state["ticker"]
-
-try:
-    with st.spinner("Reading filings"):
-        eq = extract_equity(facts(cik), cik=cik)
-except ValueError as e:
-    st.warning(str(e))
-    st.stop()
-except Exception as e:
-    if "404" in str(e):
-        st.warning(
-            "This filer has no XBRL financial data at the SEC. That is normal for funds, "
-            "trusts and holding companies, which file in a different format. Try an "
-            "operating company.")
-    else:
-        st.error(f"Could not load filings: {e}")
-    if st.button("← Search again"):
-        for k in ("cik", "ticker", "name"):
-            st.session_state.pop(k, None)
-        st.rerun()
-    st.stop()
-
-prof = profile(cik)
-latest = eq.latest
-
-q = quote(ticker)
-ends = tuple((p.label, p.end.isoformat()) for p in eq.years)
-hist_px = fiscal_prices(ticker, ends) if q.available else {}
-pe_hist = [v for _, v in pe_history(eq, hist_px)]
-
-val = value(eq, price=q.price if q.available else None,
-            day_change_pct=q.day_change_pct)
-card = score(eq, val, pe_history=pe_hist or None)
-
-
-# --------------------------------------------------------------------------
-# Teach mode
-# --------------------------------------------------------------------------
-# Six short slides on the company already on screen. Every figure is the same
-# one the research view shows -- nothing is written twice, and nothing here is
-# invented for the sake of a lesson.
-
-def teach_slide(i, eq, latest, card, val=None, quote_=None, px_hist=None):
-    rev = latest.get("revenue"); ni = latest.get("net_income")
-    eps = latest.get("eps"); dps = latest.get("dps")
-    shares = latest.get("shares"); ebit = latest.get("ebit")
-    gross = latest.get("gross_profit")
-    ocf, capex = latest.get("ocf"), latest.get("capex")
-    fcf = None if (ocf is None or capex is None) else ocf - capex
-    margin = None if (ni is None or not rev) else 100 * ni / rev
-    name = eq.entity.split(",")[0].title()
-
-    # ---- 1. what am I buying -------------------------------------------
-    if i == 0:
-        st.markdown(f'<p class="lead">One share is a <b>tiny piece</b> of the company.'
-                    + (f" There are <b>{shares / 1e9:,.2f} billion</b> of them."
-                       if shares and shares > 1e8 else
-                       f" There are <b>{shares:,.0f}</b> of them." if shares else "")
-                    + "</p>", unsafe_allow_html=True)
-
-        # Segment revenue is not in company facts -- only consolidated totals
-        # are -- so this shows where each $100 of sales goes rather than which
-        # product it came from. Same filing, and it is the more useful half.
-        if rev and (gross is not None or ebit is not None):
-            parts = []
-            if gross is not None:
-                parts.append(("Making the product", rev - gross, "var(--c5)"))
-                if ebit is not None:
-                    parts.append(("Running the company", gross - ebit, "var(--c3)"))
-                else:
-                    # Operating income was not tagged, so the remainder cannot
-                    # be split further. Naming it keeps the bar adding to 100
-                    # instead of leaving an unexplained gap.
-                    parts.append(("Everything else", gross, "var(--c4)"))
-            elif ebit is not None:
-                parts.append(("All costs", rev - ebit, "var(--c5)"))
-            if ebit is not None:
-                parts.append(("Operating profit", ebit, "var(--up)"))
-            st.markdown('<p class="picker">Where every ' + D + '100 of sales goes</p>'
-                        + '<div class="split2">' + "".join(
-                            f'<div style="width:{max(100 * abs(v) / rev, 1.5):.1f}%;'
-                            f'background:{c}"></div>' for _, v, c in parts) + "</div>"
-                        + '<div class="skey">' + "".join(
-                            f'<span><i style="background:{c}"></i>{E(l)} '
-                            f'<b>{D}{100 * v / rev:,.0f}</b></span>' for l, v, c in parts)
-                        + "</div>", unsafe_allow_html=True)
-
-        cap = val.market_cap if val and val.market_cap else None
-        cap_label = money(cap, html=False).replace("$", "\\$") if cap else "needs price"
-        with st.expander(f"Market cap  ·  {cap_label}"):
-            st.markdown(
-                "Share price × number of shares — what the whole company costs at today's "
-                "price.\n\n**This is what tells you how big something is, not the share "
-                "price.** A \\$500 share can be better value than a \\$5 one; it depends "
-                "how many shares exist and how much the company earns.")
-
-    # ---- 2. the words --------------------------------------------------
-    elif i == 1:
-        st.markdown('<p class="lead">Five terms cover most of a stock page. '
-                    "<b>Formal name, then what it actually means.</b></p>",
-                    unsafe_allow_html=True)
-        pe = val.pe if val else None
-        dy = val.dividend_yield if val else None
-        terms = [
-            ("EPS", "earnings per share", f"{D}{eps:,.2f}" if eps is not None else "—",
-             "The profit that belongs to one share — total profit divided by the number of "
-             "shares. <b>The engine under the price:</b> over long stretches a share price "
-             "tends to follow it."),
-            ("P/E ratio", "price-to-earnings", f"{pe:,.1f}×" if pe else "needs price",
-             "How many dollars you pay for each dollar the share earns in a year. <b>High "
-             "usually means investors expect growth</b> — it only turns out expensive if that "
-             "growth never arrives."),
-            ("Net margin", "net profit margin", f"{margin:,.1f}%" if margin is not None else "—",
-             f"How much of every {D}100 of sales survives as profit. <b>Falling margin means "
-             "the company is spending more to earn the same.</b>"),
-            ("Free cash flow", "cash after capital spending", money(fcf),
-             "What is left after running the business and paying for new equipment. "
-             "<b>Profit is an opinion. Cash is a fact.</b>"),
-            ("Dividend yield", "cash paid to owners", f"{dy:,.2f}%" if dy else
-             ("none" if not dps else "needs price"),
-             "Cash handed to shareholders each year as a percentage of the price. <b>The only "
-             "part of a return a falling price cannot take back.</b>"),
-        ]
-        st.markdown('<div class="gloss">' + "".join(
-            f'<div class="gl"><div class="t"><b>{E(t)}</b><i>{E(g)}</i>'
-            f"<span>{v}</span></div><p>{p}</p></div>" for t, g, v, p in terms)
-            + "</div>", unsafe_allow_html=True)
-
-    # ---- 3. is it getting better ---------------------------------------
-    elif i == 2:
-        rev_g = ni_g = None
-        rs, ns = eq.series("revenue"), eq.series("net_income")
-        if len(rs) >= 2 and rs[-2][1]:
-            rev_g = 100 * (rs[-1][1] / rs[-2][1] - 1)
-        if len(ns) >= 2 and ns[-2][1] and ns[-2][1] > 0:
-            ni_g = 100 * (ns[-1][1] / ns[-2][1] - 1)
-
-        bits = []
-        if rev_g is not None:
-            bits.append(f"Revenue <b>{'+' if rev_g >= 0 else '−'}{abs(rev_g):.1f}%</b>")
-        if ni_g is not None:
-            bits.append(f"net income <b>{'+' if ni_g >= 0 else '−'}{abs(ni_g):.1f}%</b>")
-        st.markdown('<p class="lead">' + (", ".join(bits) + " on last year."
-                    if bits else "Not enough filed history to compare years.") + "</p>",
-                    unsafe_allow_html=True)
-
-        with st.expander(f"Net margin  ·  {f'{margin:,.2f}%' if margin is not None else '—'}"):
-            st.markdown(
-                f"Of every \\$100 customers spend, about \\${margin:.0f} becomes profit."
-                if margin is not None else "Revenue or profit was not tagged in this filing."
-                + "\n\nMargin is the *quality* of sales; revenue is only the quantity. "
-                "A rising revenue line with a falling margin usually means growth is being "
-                "bought with discounts.")
-        with st.expander("Free cash flow  ·  "
-                         + money(fcf, html=False).replace("$", "\\$")):
-            st.markdown(
-                (f"Reported profit was {money(ni, html=False).replace('$', chr(92) + '$')}. "
-                 f"Real spare cash was **{money(fcf, html=False).replace('$', chr(92) + '$')}**."
-                 "\n\n" if ni and fcf is not None else "")
-                + "**Profit is an opinion. Cash is a fact.** Profit involves judgement about "
-                "when to count things. Cash either arrived or it did not.")
-
-    # ---- 4. is it expensive --------------------------------------------
-    elif i == 3:
-        pe = val.pe if val else None
-        if pe:
-            st.markdown('<p class="lead">The <b>P/E ratio</b> — what you pay for every '
-                        + D + "1 of yearly profit.</p>", unsafe_allow_html=True)
-            st.markdown(f'<span class="big">{pe:,.1f}×</span>', unsafe_allow_html=True)
-        else:
-            st.markdown('<p class="lead">A P/E needs a share price, and one is not available '
-                        "here. Everything else on this page still comes from the filing.</p>",
-                        unsafe_allow_html=True)
-        with st.expander("Why the share price alone means nothing"):
-            st.markdown(
-                "A \\$10 share is not cheaper than a \\$200 share.\n\n"
-                "Two companies, both worth \\$100 million. One split itself into 10 million "
-                "shares (\\$10 each), the other into 500,000 (\\$200 each). **Identical "
-                "businesses, identical value, wildly different share prices.**\n\n"
-                "What matters is the price against what the company earns.")
-
-    # ---- 5. the score ---------------------------------------------------
-    else:
-        st.markdown('<p class="lead">The scorecard rates <b>what the filings show</b> — five '
-                    "things the company has already reported.</p>", unsafe_allow_html=True)
-        colour = {"good": "var(--up)", "mid": "var(--warn)", "bad": "var(--down)"}[card.tone]
-        st.markdown(f'<span class="big" style="color:{colour}">{card.stars:.1f}'
-                    '<span style="font-size:1.2rem;color:var(--text-3)">/5</span></span>'
-                    f'<p class="bigsub">{E(card.verdict)}. The scorecard below shows each component.</p>',
-                    unsafe_allow_html=True)
-        st.markdown('<div class="finish"><h4>🎉 That is a company, read end to end.</h4>'
-                    "<p><b>A rising stock is not a better business.</b> "
-                    "<b>A great business can be a bad investment at the wrong price.</b> "
-                    "<b>One number never tells the whole story.</b></p></div>",
-                    unsafe_allow_html=True)
-
-    # ---- 6. the quiz ----------------------------------------------------
-    if i == 5:
-        st.markdown('<p class="lead">Five questions on what you have just read, '
-                    "using <b>this company's own numbers</b>.</p>",
-                    unsafe_allow_html=True)
-        quiz_slide(eq, latest, val, quote_)
-
-
-
-def quiz_slide(eq, latest, val, quote_):
-    """The last teach slide: check the terms just covered, against this
-    company's own numbers."""
-    eps = latest.get("eps")
-    ni = latest.get("net_income")
-    rev = latest.get("revenue")
-    margin = None if (ni is None or not rev) else 100 * ni / rev
-    ocf, capex = latest.get("ocf"), latest.get("capex")
-    fcf = None if (ocf is None or capex is None) else ocf - capex
-    pe = val.pe if val else None
-    dy = val.dividend_yield if val else None
-    q = quote_
-
-    qs = quiz_build(
-        eq.entity.split(",")[0].title(),
-        eps=eps, pe=pe, margin=margin,
-        price=q.price if q.available else None,
-        shares=latest.get("shares"),
-        fcf=(None if latest.get("ocf") is None or latest.get("capex") is None
-             else latest.get("ocf") - latest.get("capex")),
-        net_income=ni, dividend_yield=dy,
-        revenue_growth=None, income_growth=None,
-    )
-
-    rnd = st.session_state.get("quiz_round", 0)
-    qs = quiz_pick(qs, rnd) if qs else []
-
-    if qs:
-        answers = st.session_state.setdefault("quiz", {})
-        for n, question in enumerate(qs):
-            key = f"q{rnd}_{n}"
-            st.markdown(f'<div class="qq"><span class="qn">Question {n + 1}</span>'
-                        f'<p>{E(question.prompt).replace("$", D)}</p></div>',
-                        unsafe_allow_html=True)
-            picked = st.radio(question.prompt, question.options, index=None,
-                              key=f"quiz_{key}", label_visibility="collapsed")
-            if picked is not None:
-                chose = question.options.index(picked)
-                answers[key] = chose == question.correct
-                if chose == question.correct:
-                    st.markdown('<div class="qa right"><b>Correct.</b> '
-                                + question.why.replace("$", D) + "</div>",
-                                unsafe_allow_html=True)
-                else:
-                    st.markdown(
-                        '<div class="qa wrong"><b>Not quite.</b> The answer is “'
-                        + E(question.options[question.correct]).replace("$", D)
-                        + "”. " + question.why.replace("$", D) + "</div>",
-                        unsafe_allow_html=True)
-
-        done = [v for k, v in answers.items()
-                if k in {f"q{rnd}_{i}" for i in range(len(qs))}]
-        if len(done) == len(qs):
-            got = sum(done)
-            verdict, note = quiz_grade(got, len(qs))
-            tone = "up" if got / len(qs) >= 0.8 else "warn" if got / len(qs) >= 0.5 else "down"
-            st.markdown(f'<div class="qscore"><span class="big {tone}">{got}/{len(qs)}</span>'
-                        f'<p class="bigsub"><b>{E(verdict)}.</b> {E(note)}</p></div>',
-                        unsafe_allow_html=True)
-            if st.button("Try five more", key="quiz_reset"):
-                # Clearing the widget keys deselects the radios; bumping the
-                # round draws a different five with the options reordered.
-                for k in list(st.session_state):
-                    if k.startswith("quiz_q"):
-                        st.session_state.pop(k, None)
-                st.session_state["quiz"] = {}
-                st.session_state["quiz_round"] = rnd + 1
-                st.rerun()
-        else:
-            st.caption(f"{len(done)} of {len(qs)} answered.")
-
-TEACH_TITLES = [
-    "What am I buying?",
-    "The words you will see",
-    "Is it getting better?",
-    "Is it expensive?",
-    "What is the score?",
-    "Now it's your turn",
-]
-
-# --------------------------------------------------------------------------
-# Company head + headline strip
-# --------------------------------------------------------------------------
-
-eps = latest.get("eps")
-dps = latest.get("dps")
-rev = latest.get("revenue")
-ni = latest.get("net_income")
-margin = None if (ni is None or not rev) else 100 * ni / rev
-
-pe = val.pe
-dy = val.dividend_yield
-
-day = ""
-if q.available and q.day_change_pct is not None:
-    arrow = "▲" if q.day_change_pct >= 0 else "▼"
-    tone = "good" if q.day_change_pct >= 0 else "weak"
-    day = (f'<span class="day {tone}">{arrow} {abs(q.day_change_pct):.2f}% today</span>')
-
-
-st.markdown(f'<span class="tk">{E(ticker)}</span>{day}<h2 class="co">{E(eq.entity)}</h2>'
-            f'<p class="one">{E(prof.get("industry") or "")}'
-            f'{" · " if prof.get("industry") else ""}CIK {E(cik)} · '
-            f'{E(latest.label)} · Form 10-K</p>', unsafe_allow_html=True)
-
-_views = ["Research", "Teach me"]
-_want = 1 if st.session_state.pop("goto_teach", False) else None
-if _want is not None:
-    st.session_state.pop("mode", None)
-mode = st.radio("View", _views, index=_want if _want is not None else 0,
-                horizontal=True, label_visibility="collapsed", key="mode")
-
-if mode == "Teach me":
-    # Scope the green palette to this view only; research stays violet.
-    st.markdown('<div class="teach"></div>'
-                "<style>section.main{--scope:teach}</style>", unsafe_allow_html=True)
-    st.markdown("""<style>
-      div[role="radiogroup"] ~ div .gs.done, div[role="radiogroup"] ~ div .gs.now,
-      .gs.done, .gs.now{background:var(--teach) !important}
-      .gnum{color:var(--teach) !important}
-      .lead b{color:var(--teach-2) !important}
-      .finish{background:rgba(95,214,155,.09) !important;
-        border-color:var(--teach-dim) !important}
-      .finish h4{color:var(--teach-2) !important}
-      .gl .t span{color:var(--teach-2) !important}
-      .picker{color:var(--teach) !important}
-      div[data-testid="stExpander"]{border-color:var(--teach-dim) !important}
-      [data-baseweb="slider"] [role="slider"]{background:var(--teach) !important;
-        box-shadow:0 2px 10px -2px rgba(95,214,155,.75) !important}
-      [data-baseweb="slider"] div[data-testid="stSliderThumbValue"]{color:var(--teach) !important}
-      .stButton button{border-color:var(--teach-dim) !important}
-      .stButton button:hover{border-color:var(--teach) !important;color:var(--teach) !important}
-    </style>""", unsafe_allow_html=True)
-    step = st.session_state.get("step", 0)
-    n = len(TEACH_TITLES)
-    st.markdown('<div class="gbar">' + "".join(
-        f'<div class="gs {"done" if j < step else "now" if j == step else ""}"></div>'
-        for j in range(n)) + "</div>", unsafe_allow_html=True)
-    st.markdown(f'<span class="gnum">Step {step + 1} of {n}</span>'
-                f'<h3 class="gtitle">{E(TEACH_TITLES[step])}</h3>', unsafe_allow_html=True)
-
-    teach_slide(step, eq, latest, card, val=val, quote_=q,
-                px_hist=[(lab, hist_px[lab]) for lab in
-                         [p.label for p in eq.years] if lab in hist_px])
-
-    back, fwd, _ = st.columns([1, 1, 3])
-    if step > 0 and back.button("Back"):
-        st.session_state["step"] = step - 1
-        st.rerun()
-    if step < n - 1 and fwd.button("Next"):
-        st.session_state["step"] = step + 1
-        st.rerun()
-
-    st.markdown('<p class="disc">Every figure comes from filings made to the U.S. Securities '
-                "and Exchange Commission. Educational only — not advice to buy or sell "
-                "anything.</p>", unsafe_allow_html=True)
-    if st.button("← Search another company"):
-        for k in ("cik", "ticker", "name", "step"):
-            st.session_state.pop(k, None)
-        st.rerun()
-    st.stop()
-
-strip = [
-    ("Score", f"{card.stars:.1f}/5", card.tone, "see the scorecard below", None),
-    ("Share price", f"{D}{q.price:,.2f}" if q.available else "no feed",
-     "" if q.available else "dim",
-     f"as of {q.as_of}" if q.as_of else (q.problem or "price unavailable"), "price"),
-    ("EPS", f"{D}{eps:,.2f}" if eps is not None else "—", "",
-     "earnings per share — profit split per share", "eps"),
-    ("P/E ratio", f"{pe:,.2f}×" if pe else ("n/m" if q.available else "needs price"),
-     "" if pe else "dim",
-     "price-to-earnings" + ("" if pe else " — a loss means no P/E" if q.available else ""),
-     "pe"),
-    ("Dividend yield", f"{dy:,.2f}%" if dy else ("none" if dps is None or not dps else "needs price"),
-     "good" if dy and dy > 2 else "" if dy else "dim",
-     "cash paid to you per " + D + "100 held", "div"),
-    ("Net margin", f"{margin:,.2f}%" if margin is not None else "—",
-     "good" if margin and margin > 15 else "watch" if margin and margin > 7 else "weak",
-     "net profit margin — kept from every " + D + "100 of sales", "margin"),
-]
-st.markdown('<div class="five">' + "".join(
-    f'<div class="fv"><span class="k">{E(k)}</span>'
-    f'<span class="v {t}">{v}</span><span class="d">{d}</span>'
-    + "</div>" for k, v, t, d, g in strip) + "</div>", unsafe_allow_html=True)
-
-if any(x[4] for x in strip):
-    cols = st.columns(len(strip))
-    for col, (k, _, _, _, g) in zip(cols, strip):
-        if not g:
-            col.markdown('<div class="nolink"></div>', unsafe_allow_html=True)
-            continue
-        if col.button("what does this mean? →", key=f"gl_{g}", use_container_width=True):
-            # The radio owns st.session_state["mode"], so it cannot be written
-            # here. Set a flag the radio's index reads on the next run.
-            st.session_state["goto_teach"] = True
-            st.session_state["step"] = 1
-            st.rerun()
-
-# --------------------------------------------------------------------------
-# 01 the numbers
-# --------------------------------------------------------------------------
-
-sh("The numbers", "last three years")
-
-def series3(key):
-    """The three most recent filed values, oldest first."""
-    got = eq.series(key)
-    return got[-3:] if got else []
-
-
-def fcf_series():
-    out = []
-    for p in eq.years:
-        o, c = p.get("ocf"), p.get("capex")
-        if o is not None and c is not None:
-            out.append((p.label, o - c))
-    return out[-3:]
-
-
-def margin_series():
-    out = []
-    for p in eq.years:
-        n, r = p.get("net_income"), p.get("revenue")
-        if n is not None and r:
-            out.append((p.label, 100 * n / r))
-    return out[-3:]
-
-
-LINES = [
-    ("Revenue", series3("revenue"), money, "higher", "everything customers paid"),
-    ("Net income", series3("net_income"), money, "higher", "what was left after every cost"),
-    ("EPS", series3("eps"), lambda v: f"{D}{v:,.2f}", "higher", "profit belonging to one share"),
-    ("Net margin", margin_series(), lambda v: f"{v:,.1f}%", "higher",
-     "kept from every " + D + "100 of sales"),
-    ("Free cash flow", fcf_series(), money, "higher", "cash after capital spending"),
-    ("Dividend per share", series3("dps"), lambda v: f"{D}{v:,.2f}", "higher",
-     "cash declared per share"),
-    ("Total debt", series3("total_debt"), money, "lower", "everything borrowed"),
-]
-
-def arrow(vals, better):
-    """Direction against the earliest of the three years shown."""
-    if len(vals) < 2:
-        return ""
-    first, last_v = vals[0][1], vals[-1][1]
-    if not first:
-        return ""
-    chg = 100 * (last_v / first - 1) if first > 0 else None
-    if chg is None or abs(chg) < 0.5:
-        return '<span class="trend flat">—</span>'
-    good = (chg > 0) if better == "higher" else (chg < 0)
-    return (f'<span class="trend {"up" if good else "down"}">'
-            f'{"▲" if chg > 0 else "▼"}{abs(chg):,.0f}%</span>')
-
-have = [x for x in LINES if x[1]]
-if have:
-    labels = [lab for lab, _ in max((x[1] for x in have), key=len)]
-    head = "<tr><th>Measure</th>" + "".join(f"<th>{E(l)}</th>" for l in labels) \
-        + "<th>3-yr</th></tr>"
-    body = ""
-    for name, vals, fmt, better, hint in have:
-        got = dict(vals)
-        cells = ""
-        for l in labels:
-            v = got.get(l)
-            cells += f"<td>{fmt(v) if v is not None else '—'}</td>"
-        body += (f'<tr><td class="mname"><b>{E(name)}</b><i>{hint}</i></td>'
-                 f'{cells}<td class="tcol">{arrow(vals, better)}</td></tr>')
-    st.markdown(f'<div class="panel"><table class="years"><thead>{head}</thead>'
-                f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
-    st.caption("Green is the direction you would rather see — for debt that means falling. "
-               "The last column compares the newest year with the oldest shown.")
-
-# --------------------------------------------------------------------------
-# 02 where the money goes
-# --------------------------------------------------------------------------
-
-gross = latest.get("gross_profit")
-ebit = latest.get("ebit")
-capex = latest.get("capex")
-if rev and (gross is not None or ebit is not None):
-    sh("Where the money goes", latest.label)
-    lines = [("Revenue", "total sales", rev, "var(--acc)")]
-    if gross is not None:
-        lines.append(("Cost of revenue", "making the product", -(rev - gross), "var(--c5)"))
-        lines.append(("Gross profit", "what is left", gross, "var(--c3)"))
-    if ebit is not None:
-        if gross is not None:
-            lines.append(("Operating costs", "running the business", -(gross - ebit), "var(--c5)"))
-        lines.append(("Operating income", "EBIT — before interest and tax", ebit, "var(--up)"))
-    if capex is not None:
-        lines.append(("Capital spending", "new plant, kit, technology", -capex, "var(--c4)"))
-
-    body = "".join(
-        f'<div class="frow"><span class="flab"><b>{E(l)}</b><i>{E(g)}</i></span>'
-        f'<span class="fbar"><div style="width:{max(abs(v) / rev * 100, 1.5):.1f}%;'
-        f'background:{col}"></div></span>'
-        f'<span class="famt">{money(v)}</span></div>'
-        for l, g, v, col in lines)
-    keep = f"{100 * ebit / rev:.0f}" if ebit is not None else None
-    st.markdown(f'<div class="panel">{body}'
-                + (f'<p class="cfoot">{D}{keep} of every {D}100 of sales survives to '
-                   "operating income.</p>" if keep else "")
-                + "</div>", unsafe_allow_html=True)
-
-# --------------------------------------------------------------------------
-# 03 this year so far
-# --------------------------------------------------------------------------
-
-if eq.quarters:
-    sh("This year so far", f"{len(eq.quarters)} of 4 quarters filed")
-    ytd = sum(qq.get("revenue") for qq in eq.quarters if qq.get("revenue"))
-    run = ytd / len(eq.quarters) * 4
-    last_year = rev
-    cells = ""
-    for i in range(4):
-        if i < len(eq.quarters):
-            qq = eq.quarters[i]
-            chg = qq.change("revenue")
-            tone = "" if chg is None else ("up" if chg >= 0 else "down")
-            cells += (f'<div class="qc"><span class="ql">{qq.fp}</span>'
-                      f'<span class="qv {tone}">{money(qq.get("revenue"))}</span>'
-                      + (f'<span class="qs {tone}">'
-                         f'{"▲" if chg >= 0 else "▼"}{abs(chg):,.1f}% on {qq.fp} last year'
-                         "</span>" if chg is not None else
-                         '<span class="qs">no year-ago figure filed</span>')
-                      + "</div>")
-        else:
-            cells += ('<div class="qc pending"><span class="ql">Q'
-                      f'{i + 1}</span><span class="qv">—</span>'
-                      '<span class="qs">not filed yet</span></div>')
-    rr = ""
-    if last_year:
-        chg = 100 * (run / last_year - 1)
-        rr = (f'<div class="runrate"><span>At this pace the year lands near '
-              f'<b>{money(run)}</b> against <b>{money(last_year)}</b> last year — '
-              f'<b>{pct(chg)}</b>. <span style="color:var(--text-3)">Arithmetic on the '
-              "quarters filed, not a forecast.</span></span></div>")
-    st.markdown(f'<div class="panel"><div class="qrow">{cells}</div>{rr}</div>',
-                unsafe_allow_html=True)
-
-# --------------------------------------------------------------------------
-# 05 what management said
-# --------------------------------------------------------------------------
-# Best-effort. Filings vary enormously in structure, so when a section cannot
-# be read the block simply does not appear -- an empty box or a wrong quote
-# would both be worse than silence.
-
-ft = prose(cik)
-
-if ft and ft.mda:
-    sh("What management said", f"{ft.form} filed {ft.filed}")
-    st.markdown('<div class="panel quote">'
-                + "".join(f"<p>“{E(x)}”</p>" for x in ft.mda)
-                + '<span class="src">Quoted verbatim from the filing — not summarised</span>'
-                + "</div>", unsafe_allow_html=True)
-    with st.expander("Why the share price move is not explained here"):
-        st.markdown(
-            "The filing says what was reported and what management blamed for it. It cannot "
-            "say why the price moved on a given day — that is news, rumour, rates and the "
-            "whole market's mood at once.\n\n**A confident-sounding reason is worse than no "
-            "reason**, so this tool does not guess one.")
-
-if ft and ft.risks:
-    sh("What could go wrong", "the company's own list")
-    st.markdown('<div class="panel risk">'
-                + "".join(f'<div class="rr">{E(r)}</div>' for r in ft.risks)
-                + "</div>", unsafe_allow_html=True)
-    st.caption("From the filing's risk factors. Listed does not mean happening — filers "
-               "list everything, partly for legal cover.")
-
-# --------------------------------------------------------------------------
-# 07 peers
-# --------------------------------------------------------------------------
-# Typed by the reader rather than parsed from the filing. Deciding who counts
-# as a peer is a judgement, and a chosen set beats a guessed one.
-
-# --------------------------------------------------------------------------
-# 09 what would have to happen
-# --------------------------------------------------------------------------
-# Two sliders, because a return has two engines and either can undo the other.
-# Explicitly not a forecast: the point is to show how much the answer moves
-# when assumptions nobody knows are changed.
-
-if eps and eps > 0:
-    sh("What would have to happen", "move the sliders")
-    start_pe = float(round(pe)) if pe else 20.0
-    c1, c2 = st.columns(2)
-    g = c1.slider("EPS growth a year", -10.0, 25.0, 5.0, 0.5, format="%.1f%%")
-    m = c2.slider("P/E ratio", 5.0, 70.0, min(max(start_pe, 5.0), 70.0), 1.0, format="%.0f×")
-
-    eps5 = eps * (1 + g / 100) ** 5
-    price5 = eps5 * m
-    divs = (dps or 0) * 5
-    base = q.price if q.available else (eps * start_pe)
-    ret = ((price5 + divs) / base) ** (1 / 5) - 1 if base > 0 else None
-
-    if ret is not None:
-        tone = "up" if ret >= 0 else "down"
-        st.markdown(
-            f'<div class="panel"><span class="big {tone}">{ret * 100:,.1f}%</span>'
-            f'<p class="bigsub">a year for five years. <b>{D}1,000</b> would become '
-            f'<b>{D}{1000 * (1 + ret) ** 5:,.0f}</b>, with EPS at '
-            f'<b>{D}{eps5:,.2f}</b> and the share at <b>{D}{price5:,.0f}</b>.</p>'
-            + ("" if q.available else
-               '<p class="cfoot">No live price, so this starts from the current EPS at '
-               f"{start_pe:.0f}× rather than the market price.</p>")
-            + "</div>", unsafe_allow_html=True)
-    st.caption("Not a prediction. Try 10% growth with the P/E at 15× — profits double and "
-               "you still lose money.")
-
-# --------------------------------------------------------------------------
-# 10 filings
-# --------------------------------------------------------------------------
-
-fl = filings(cik)
-if fl:
-    sh("Recent filings", "newest first")
-    kinds = {"10-K": ("k", "Annual report"), "10-Q": ("q", "Quarterly report"),
-             "8-K": ("e", "Current report")}
-    items = ""
-    for f in fl:
-        cls, what = kinds.get(f["form"][:4], ("o", "Filing"))
-        desc = f.get("desc") or what
-        items += (f'<li><span class="ftype {cls}">{E(f["form"])}</span>'
-                  f'<span class="fmain"><a href="{E(f["url"])}" target="_blank" '
-                  f'rel="noopener">{E(desc)}</a></span>'
-                  f'<span class="fwhen">{E(f["filed"])}</span></li>')
-    st.markdown(f'<div class="panel"><ul class="feed">{items}</ul></div>',
-                unsafe_allow_html=True)
-
-# --------------------------------------------------------------------------
-# 08 the scorecard
-# --------------------------------------------------------------------------
-
-sh("The scorecard", "what the filings answer")
-dots = ""
-for i in range(5):
-    f = card.stars - i
-    dots += f'<span class="sd {"on" if f >= 1 else "half" if f >= .5 else ""}"></span>'
-colour = {"good": "var(--up)", "mid": "var(--warn)", "bad": "var(--down)"}[card.tone]
-comp_rows = "".join(
-    f'<div class="crow"><span class="cpip {c.tone}"></span>'
-    f'<span class="cmain"><b>{E(c.name)}</b><span>{c.why}</span></span>'
-    f'<span class="cscore">{c.score}/2</span></div>' for c in card.components)
-skipped = ""
-if card.unscored:
-    skipped = ('<p class="skip">Not scored: '
-               + "; ".join(E(u) for u in card.unscored) + "</p>")
-
-st.markdown(f'''<div class="panel">
-  <div class="stars"><span class="sval">{card.stars:.1f}</span>
-    <span class="sdots">{dots}</span>
-    <span class="sverd" style="color:{colour}">{E(card.verdict)}</span></div>
-  {comp_rows}{skipped}
-  <div class="sfoot"><b>What this is not.</b> It does not predict the share price and is not
-    advice to buy or sell. A high score at the wrong price still loses money, and a low score
-    can rise for years. It scores what the company has already reported — the future is not in
-    the filings.</div></div>''', unsafe_allow_html=True)
-
-# --------------------------------------------------------------------------
-# Notes and footer
-# --------------------------------------------------------------------------
-
-if eq.notes:
-    sh("Worth knowing", "how these figures were built")
-    st.markdown('<div class="panel note-list">'
-                + "".join(f"<p>{E(n)}</p>" for n in eq.notes) + "</div>",
-                unsafe_allow_html=True)
-
-st.markdown('<p class="disc">Figures come from SEC filings. Share price and today\'s '
-            "move come from a market feed. Educational research only — not advice.</p>",
-            unsafe_allow_html=True)
-
-if st.button("← Search another company"):
-    for k in ("cik", "ticker", "name"):
-        st.session_state.pop(k, None)
-    st.rerun()
+    from filing_text import extract_risks, to_text
+
+    junk = to_text("<html><body><p>Item 1A. Risk Factors</p>" + "".join(
+        f"<p>{row}</p>" for row in [
+            "MAY 31, 2026 MAY 31, 2025",
+            "Balance at May 31, 2023 305 $ — 1,227 $ 3 $ 12,412 $ 231 $ 1,358 $ 14,004",
+            "EXPECTED MATURITY DATE YEAR ENDING MAY 31",
+            "ITEM 7A. QUANTITATIVE AND QUALITATIVE DISCLOSURES ABOUT MARKET RISK",
+            "Our material cash requirements as of May 31, 2026, were as follows",
+            "Table of Contents",
+            "12,412",
+        ]) + "<p>A shift in consumer preferences could reduce demand for our products</p>"
+        + "<p>We rely on a small number of contract manufacturers</p>"
+        + "<p>Item 1B. Unresolved Staff Comments</p>" + "x" * 500 + "</body></html>")
+
+    risks, why = extract_risks(junk)
+    for r in risks:
+        assert "MAY 31" not in r.upper(), r
+        assert "BALANCE AT" not in r.upper(), r
+        assert "MATURITY" not in r.upper(), r
+        assert not r.upper().startswith("ITEM"), r
+        assert sum(c.isdigit() for c in r) <= 3, r
+        assert r != r.upper(), r
+    assert any("consumer preferences" in r for r in risks), risks
+    assert any("contract manufacturers" in r for r in risks), risks
+    print("risk junk rejected ok")
+
+
+
+
+def test_span_picks_real_section():
+    """Item headings appear three times: contents, section, cross-reference.
+
+    A real filing has all three, and only the middle one is the section. Taking
+    the first gives a contents line; taking the last gives whatever tables
+    follow a note. The parser must pick the properly-closed span between them.
+    """
+    from filing_text import _item_span, extract_risks, to_text
+
+    doc = to_text(
+        "<html><body>"
+        # 1. table of contents
+        "<p>Item 1A. Risk Factors .......... 12</p>"
+        "<p>Item 1B. Unresolved Staff Comments .......... 20</p>"
+        # 2. the real section
+        "<p>Item 1A. Risk Factors</p>"
+        "<p>A shift in consumer preferences could reduce demand for our products</p>"
+        "<p>Weather patterns may affect store traffic in any given quarter</p>"
+        + "<p>Explanatory text. </p>" * 60 +
+        "<p>Item 1B. Unresolved Staff Comments</p><p>None.</p>"
+        "<p>Item 8. Financial Statements</p>"
+        # 3. a cross-reference deep in the notes, followed by tables
+        + "<p>See Item 1A. Risk Factors for further discussion.</p>"
+        + "".join(f"<p>Balance at May 31, 202{i} 1,2{i}4 $ 3,4{i}5</p>" for i in range(5)) * 40
+        + "</body></html>")
+
+    span = _item_span(doc, r"item\s*1a[\.\s]{0,4}risk\s*factors",
+                      r"item\s*1b[\.\s]{0,4}unresolved|item\s*2[\.\s]{0,4}propert")
+    assert span is not None
+    assert "consumer preferences" in span, span[:120]
+    assert "Balance at May 31" not in span, "picked the cross-reference, not the section"
+
+    risks, why = extract_risks(doc)
+    assert not why, why
+    assert any("consumer preferences" in r for r in risks), risks
+    assert any("Weather patterns" in r for r in risks), risks
+    assert not any("Balance at" in r for r in risks), risks
+    print("span selection ok")
+
+
+
+
+def test_quarter_year_ago():
+    """Quarters must compare against the same quarter a year earlier.
+
+    A seasonal business read Q3-against-Q2 looks like it collapsed every
+    autumn. Only the equivalent period is meaningful.
+    """
+    def q(y, qn, rev, eps):
+        starts = {1: f"{y}-01-01", 2: f"{y}-04-01", 3: f"{y}-07-01", 4: f"{y}-10-01"}
+        ends = {1: f"{y}-03-31", 2: f"{y}-06-30", 3: f"{y}-09-30", 4: f"{y}-12-31"}
+        return (dur(starts[qn], ends[qn], rev, form="10-Q", filed=f"{y}-12-01"),
+                dur(starts[qn], ends[qn], eps, form="10-Q", filed=f"{y}-12-01"))
+
+    revs, epss = [dur("2025-01-01", "2025-12-31", 16_000)], [dur("2025-01-01", "2025-12-31", 3.20)]
+    # last year's quarters, then this year's -- this year up on each
+    for qn, (r, e) in enumerate([(3_800, 0.72), (3_900, 0.75), (4_000, 0.78), (4_300, 0.95)], 1):
+        a, b = q(2025, qn, r, e)
+        revs.append(a); epss.append(b)
+    for qn, (r, e) in enumerate([(4_100, 0.80), (4_300, 0.86), (4_500, 0.90)], 1):
+        a, b = q(2026, qn, r, e)
+        revs.append(a); epss.append(b)
+
+    eq = extract_equity(build("SEASONAL CO", {
+        "Revenues": {"units": {"USD": revs}},
+        "EarningsPerShareDiluted": {"units": {"USD/shares": epss}},
+        "NetIncomeLoss": {"units": {"USD": [dur("2025-01-01", "2025-12-31", 1_600)]}},
+    }))
+
+    assert len(eq.quarters) == 3, [p.label for p in eq.quarters]
+    q1 = eq.quarters[0]
+    assert q1.get("revenue") == 4_100
+    assert q1.year_ago.get("revenue") == 3_800, q1.year_ago
+    assert round(q1.change("revenue"), 1) == 7.9, q1.change("revenue")
+    assert q1.change("eps") is not None and q1.change("eps") > 0
+
+    q3 = eq.quarters[2]
+    assert q3.year_ago.get("revenue") == 4_000
+    assert round(q3.change("revenue"), 1) == 12.5
+
+    # No prior-year figure means no change, rather than a made-up one.
+    bare = extract_equity(build("NEW CO", {
+        "Revenues": {"units": {"USD": [
+            dur("2025-01-01", "2025-12-31", 900),
+            dur("2026-01-01", "2026-03-31", 300, form="10-Q", filed="2026-05-01")]}},
+        "NetIncomeLoss": {"units": {"USD": [dur("2025-01-01", "2025-12-31", 90)]}},
+    }))
+    assert bare.quarters[0].change("revenue") is None
+    print("quarter year-ago ok")
+
+
+def main():
+    test_clean()
+    test_valuation()
+    test_derivation()
+    test_quarters()
+    test_guards()
+    test_scorecard()
+    test_prices()
+    test_filing_text()
+    test_risk_junk_rejected()
+    test_span_picks_real_section()
+    test_quarter_year_ago()
+    print("\nAll checks passed.")
+
+
+if __name__ == "__main__":
+    main()
