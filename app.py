@@ -413,13 +413,25 @@ h2.co .day{font-size:.7rem;vertical-align:middle}
   border-radius:50%;background:var(--text-3)}
 
 
-/* search results */
-.hit{display:flex;align-items:baseline;gap:.8rem;padding:.55rem .8rem;background:var(--surf);
-  border:1px solid var(--line);border-radius:7px;min-height:2.4rem}
-.hit .ht{font-family:var(--mono);font-size:.72rem;font-weight:700;color:var(--acc);
-  min-width:3.8rem;letter-spacing:.04em}
-.hit .hn{font-size:.9rem;color:var(--text)}
-div[data-testid="stColumn"] .stButton button{height:2.4rem}
+/* search results: full-width rows */
+.hitrow .stButton button{width:100%;text-align:left;justify-content:flex-start;
+  background:var(--surf);border:1px solid var(--line);border-radius:7px;
+  padding:.7rem .9rem;font-size:.92rem;font-weight:500;color:var(--text);
+  min-height:2.7rem;margin-bottom:.35rem}
+.hitrow .stButton button:hover{border-color:var(--acc);background:var(--surf-2);
+  color:var(--acc-2)}
+.hitrow .stButton button p{text-align:left !important;width:100%}
+
+
+/* search results: each row is a full-width button dressed as a list item */
+div[data-testid="stVerticalBlock"]:has(.hitrow) .stButton button{
+  width:100%;text-align:left;justify-content:flex-start;background:var(--surf);
+  border:1px solid var(--line);border-radius:7px;padding:.7rem .95rem;
+  font-size:.92rem;font-weight:500;color:var(--text);min-height:2.7rem}
+div[data-testid="stVerticalBlock"]:has(.hitrow) .stButton button:hover{
+  border-color:var(--acc);background:var(--surf-2);color:var(--acc-2)}
+div[data-testid="stVerticalBlock"]:has(.hitrow) .stButton button p{
+  text-align:left !important;width:100%;font-family:var(--mono);font-size:.86rem}
 
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
@@ -626,12 +638,14 @@ if query:
     # saves guessing the precise name.
     st.markdown(f'<p class="picker">{len(hits)} '
                 f'{"match" if len(hits) == 1 else "matches"}</p>', unsafe_allow_html=True)
+    # The whole row is the button. Streamlit cannot make an HTML block
+    # clickable, so rather than pairing a div with a separate control, the
+    # button itself carries the label and is styled to look like a row.
+    box = st.container()
+    box.markdown('<span class="hitrow"></span>', unsafe_allow_html=True)
     for h in hits:
-        c1, c2 = st.columns([5, 1])
-        c1.markdown(f'<div class="hit"><span class="ht">{E(h["ticker"])}</span>'
-                    f'<span class="hn">{E(h["name"].title())}</span></div>',
-                    unsafe_allow_html=True)
-        if c2.button("Open", key=f"hit_{h['cik']}", use_container_width=True):
+        if box.button(f"{h['ticker']}  ·  {h['name'].title()}",
+                      key=f"hit_{h['cik']}", use_container_width=True):
             st.session_state.pop("fund", None)
             for k in ("step", "quiz", "quiz_round"):
                 st.session_state.pop(k, None)
