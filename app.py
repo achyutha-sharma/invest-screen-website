@@ -347,6 +347,26 @@ div[data-testid="stHorizontalBlock"]:has(button[kind])
 .qc .qv.up{color:var(--up)} .qc .qv.down{color:var(--down)}
 .qc .qs.up{color:var(--up)} .qc .qs.down{color:var(--down)}
 
+
+.bullets p{position:relative;padding:.6rem 0 .6rem 1.35rem;margin:0;font-size:.93rem;
+  color:var(--text-2);line-height:1.62;border-bottom:1px solid var(--line);max-width:64ch}
+.bullets p:first-child{padding-top:0} 
+.bullets p:last-child{border-bottom:0;padding-bottom:0}
+.bullets p::before{content:"";position:absolute;left:.25rem;top:1.15em;width:6px;height:6px;
+  border-radius:50%;background:var(--teach)}
+.bullets p:first-child::before{top:.55em}
+.bullets b{color:#FFFFFF;font-weight:700}
+
+
+.gl p{margin:.5rem 0 0;font-size:.88rem;color:var(--text-2);line-height:1.65;max-width:64ch}
+.gl p.eg{background:rgba(95,214,155,.07);border-left:2px solid var(--teach-dim);
+  padding:.55rem .75rem;border-radius:0 5px 5px 0;margin-top:.7rem;color:var(--text-2)}
+.gl p.eg b{color:var(--teach-2)}
+.gl p.wm{color:var(--text-3);font-size:.85rem;border-top:1px solid var(--line);
+  padding-top:.6rem;margin-top:.7rem}
+.gl p.wm b{color:var(--text-2)}
+.gl{padding:1.05rem 1.1rem}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -534,6 +554,18 @@ card = score(eq, val, pe_history=pe_hist or None)
 # one the research view shows -- nothing is written twice, and nothing here is
 # invented for the sake of a lesson.
 
+
+def shares_text(n):
+    """Share count at a readable scale."""
+    if n is None:
+        return ""
+    if n >= 1e9:
+        return f"{n / 1e9:,.2f} billion"
+    if n >= 1e6:
+        return f"{n / 1e6:,.0f} million"
+    return f"{n:,.0f}"
+
+
 def teach_slide(i, eq, latest, card, val=None, quote_=None, px_hist=None):
     rev = latest.get("revenue"); ni = latest.get("net_income")
     eps = latest.get("eps"); dps = latest.get("dps")
@@ -541,140 +573,127 @@ def teach_slide(i, eq, latest, card, val=None, quote_=None, px_hist=None):
     gross = latest.get("gross_profit")
     ocf, capex = latest.get("ocf"), latest.get("capex")
     fcf = None if (ocf is None or capex is None) else ocf - capex
+    ni = latest.get("net_income")
     margin = None if (ni is None or not rev) else 100 * ni / rev
     name = eq.entity.split(",")[0].title()
 
-    # ---- 1. what am I buying -------------------------------------------
+    # ---- 1. what a stock actually is ------------------------------------
     if i == 0:
-        st.markdown(f'<p class="lead">One share is a <b>tiny piece</b> of the company.'
-                    + (f" There are <b>{shares / 1e9:,.2f} billion</b> of them."
-                       if shares and shares > 1e8 else
-                       f" There are <b>{shares:,.0f}</b> of them." if shares else "")
-                    + "</p>", unsafe_allow_html=True)
-
-        # Segment revenue is not in company facts -- only consolidated totals
-        # are -- so this shows where each $100 of sales goes rather than which
-        # product it came from. Same filing, and it is the more useful half.
-        if rev and (gross is not None or ebit is not None):
-            parts = []
-            if gross is not None:
-                parts.append(("Making the product", rev - gross, "var(--c5)"))
-                if ebit is not None:
-                    parts.append(("Running the company", gross - ebit, "var(--c3)"))
-                else:
-                    # Operating income was not tagged, so the remainder cannot
-                    # be split further. Naming it keeps the bar adding to 100
-                    # instead of leaving an unexplained gap.
-                    parts.append(("Everything else", gross, "var(--c4)"))
-            elif ebit is not None:
-                parts.append(("All costs", rev - ebit, "var(--c5)"))
-            if ebit is not None:
-                parts.append(("Operating profit", ebit, "var(--up)"))
-            st.markdown('<p class="picker">Where every ' + D + '100 of sales goes</p>'
-                        + '<div class="split2">' + "".join(
-                            f'<div style="width:{max(100 * abs(v) / rev, 1.5):.1f}%;'
-                            f'background:{c}"></div>' for _, v, c in parts) + "</div>"
-                        + '<div class="skey">' + "".join(
-                            f'<span><i style="background:{c}"></i>{E(l)} '
-                            f'<b>{D}{100 * v / rev:,.0f}</b></span>' for l, v, c in parts)
-                        + "</div>", unsafe_allow_html=True)
-
-        cap = val.market_cap if val and val.market_cap else None
-        cap_label = money(cap, html=False).replace("$", "\\$") if cap else "needs price"
-        with st.expander(f"Market cap  ·  {cap_label}"):
-            st.markdown(
-                "Share price × number of shares — what the whole company costs at today's "
-                "price.\n\n**This is what tells you how big something is, not the share "
-                "price.** A \\$500 share can be better value than a \\$5 one; it depends "
-                "how many shares exist and how much the company earns.")
+        st.markdown('<p class="lead">A share is a <b>slice of a company</b> — not a bet, '
+                    "not a token. Owning one makes you a part-owner of the business.</p>",
+                    unsafe_allow_html=True)
+        st.markdown(f'''<div class="panel bullets">
+          <p><b>You own a piece of everything it has.</b> Its buildings, its brand, its
+             cash — and its debts. {E(name)} is divided into
+             <b>{shares_text(shares)}</b> shares.</p>
+          <p><b>You have a claim on its profits.</b> Whatever the company earns belongs to
+             shareholders. It decides whether to hand that out as a dividend or reinvest it.</p>
+          <p><b>Your money does not go to the company.</b> Buying shares on an exchange
+             means buying from another investor. The company only received money when it
+             first sold those shares.</p>
+          <p><b>The price moves without the company doing anything.</b> It is set by what
+             buyers and sellers agree today, which is why a share can fall on a day the
+             business had a perfectly good one.</p>
+          <p><b>The company still notices.</b> A higher share price makes it cheaper to
+             raise money and harder to be taken over, and most executives are paid partly
+             in shares — so the price shapes what management does.</p>
+        </div>''' if shares else '''<div class="panel bullets">
+          <p><b>You own a piece of everything it has</b> — buildings, brand, cash, and debts.</p>
+          <p><b>You have a claim on its profits</b>, which the company either pays out or
+             reinvests.</p>
+          <p><b>Your money does not go to the company</b> when you buy on an exchange. You
+             are buying from another investor.</p>
+          <p><b>The price moves without the company doing anything</b>, because it is set
+             by what buyers and sellers agree today.</p>
+        </div>''', unsafe_allow_html=True)
 
     # ---- 2. the words --------------------------------------------------
     elif i == 1:
         st.markdown('<p class="lead">Five terms cover most of a stock page. '
-                    "<b>Formal name, then what it actually means.</b></p>",
+                    "<b>The formal name, what it means, and what it looks like here.</b></p>",
                     unsafe_allow_html=True)
         pe = val.pe if val else None
         dy = val.dividend_yield if val else None
+        price = quote_.price if quote_ and quote_.available else None
+
+        def eg(text):
+            return f'<span class="eg">{text}</span>'
+
         terms = [
-            ("EPS", "earnings per share", f"{D}{eps:,.2f}" if eps is not None else "—",
-             "The profit that belongs to one share — total profit divided by the number of "
-             "shares. <b>The engine under the price:</b> over long stretches a share price "
-             "tends to follow it."),
-            ("P/E ratio", "price-to-earnings", f"{pe:,.1f}×" if pe else "needs price",
-             "How many dollars you pay for each dollar the share earns in a year. <b>High "
-             "usually means investors expect growth</b> — it only turns out expensive if that "
-             "growth never arrives."),
-            ("Net margin", "net profit margin", f"{margin:,.1f}%" if margin is not None else "—",
-             f"How much of every {D}100 of sales survives as profit. <b>Falling margin means "
-             "the company is spending more to earn the same.</b>"),
-            ("Free cash flow", "cash after capital spending", money(fcf),
-             "What is left after running the business and paying for new equipment. "
-             "<b>Profit is an opinion. Cash is a fact.</b>"),
-            ("Dividend yield", "cash paid to owners", f"{dy:,.2f}%" if dy else
-             ("none" if not dps else "needs price"),
-             "Cash handed to shareholders each year as a percentage of the price. <b>The only "
-             "part of a return a falling price cannot take back.</b>"),
+            ("EPS", "earnings per share",
+             f"{D}{eps:,.2f}" if eps is not None else "—",
+             "Take everything the company earned last year and divide it between every "
+             "share that exists. That is EPS — <b>the profit belonging to one share</b>.",
+             (f"{E(name)} earned {money(ni)} and has {shares_text(shares)} shares, "
+              f"so each share earned <b>{D}{eps:,.2f}</b>."
+              if eps is not None and ni and shares else
+              "A company earning $100m with 50m shares has an EPS of $2.00."),
+             "It is the number a share price tends to follow over long stretches. A rising "
+             "price with falling EPS means investors are paying more for less — which can "
+             "reverse quickly."),
+
+            ("P/E ratio", "price-to-earnings",
+             f"{pe:,.1f}×" if pe else "needs price",
+             "How many dollars you pay for each dollar the share earns in a year. Price "
+             "divided by EPS. <b>It is the market's expectations, priced.</b>",
+             (f"At {D}{price:,.2f} a share against {D}{eps:,.2f} of earnings, you pay "
+              f"<b>{D}{pe:,.0f} for every {D}1</b> of annual profit — about {pe:,.0f} years "
+              "of profit to earn your money back, if nothing changed."
+              if pe and price and eps else
+              "A $60 share earning $3 trades at 20× — $20 paid per $1 of annual profit."),
+             "High is not the same as expensive. A company at 40× may be the better buy if "
+             "profits grow into the price; one at 10× may be cheap because investors expect "
+             "trouble. <b>The ratio tells you what is assumed, not whether it is right.</b>"),
+
+            ("Net margin", "net profit margin",
+             f"{margin:,.1f}%" if margin is not None else "—",
+             "Of every dollar customers spend, how much survives as profit after every "
+             "cost — materials, wages, marketing, interest and tax.",
+             (f"{E(name)} keeps about <b>{D}{margin:,.0f} of every {D}100</b> customers "
+              f"spend."
+              if margin is not None else
+              "A supermarket keeps about $2 of every $100; a software company can keep $25."),
+             "Thin is not automatically bad — supermarkets run on a few percent and do fine "
+             "on volume. <b>The direction matters more than the level.</b> A margin falling "
+             "year after year means the company is spending more to earn the same."),
+
+            ("Free cash flow", "cash after capital spending",
+             money(fcf),
+             "The cash left after running the business <i>and</i> paying for the new "
+             "equipment, stores or technology it needs to keep going.",
+             (f"{E(name)} took in {money(ocf)} from operations and spent {money(capex)} on "
+              f"capital, leaving <b>{money(fcf)}</b> against {money(ni)} of reported profit."
+              if fcf is not None and ocf and capex and ni else
+              "A company with $50m from operations spending $20m on equipment has $30m free."),
+             "<b>Profit is an opinion. Cash is a fact.</b> Profit involves judgement about "
+             "when to count a sale; cash either arrived or it did not. When the two drift "
+             "apart for years, trust the cash."),
+
+            ("Dividend yield", "cash paid to owners",
+             f"{dy:,.2f}%" if dy else ("none" if not dps else "needs price"),
+             "The cash a company hands its shareholders each year, as a percentage of what "
+             "a share costs today.",
+             (f"{E(name)} declares {D}{dps:,.2f} a share against a {D}{price:,.2f} price, "
+              f"so every {D}100 invested pays about <b>{D}{dy:,.2f}</b> a year."
+              if dy and dps and price else
+              (f"{E(name)} pays no dividend — it reinvests the cash instead, which is normal "
+               "for faster-growing companies." if not dps else
+               "A $2 dividend on a $50 share is a 4% yield.")),
+             "It is the one part of a return a falling price cannot take back. Once the cash "
+             "is paid it is yours, which is why a company cutting its dividend is treated as "
+             "such bad news."),
         ]
+
         st.markdown('<div class="gloss">' + "".join(
-            f'<div class="gl"><div class="t"><b>{E(t)}</b><i>{E(g)}</i>'
-            f"<span>{v}</span></div><p>{p}</p></div>" for t, g, v, p in terms)
-            + "</div>", unsafe_allow_html=True)
+            f'<div class="gl"><div class="t"><b>{E(t)}</b><i>{E(g)}</i><span>{v}</span></div>'
+            f"<p>{meaning}</p>"
+            f'<p class="eg"><b>Here:</b> {example}</p>'
+            f'<p class="wm">{why}</p></div>'
+            for t, g, v, meaning, example, why in terms) + "</div>",
+            unsafe_allow_html=True)
 
-    # ---- 3. is it getting better ---------------------------------------
+    # ---- 3. the score ---------------------------------------------------
     elif i == 2:
-        rev_g = ni_g = None
-        rs, ns = eq.series("revenue"), eq.series("net_income")
-        if len(rs) >= 2 and rs[-2][1]:
-            rev_g = 100 * (rs[-1][1] / rs[-2][1] - 1)
-        if len(ns) >= 2 and ns[-2][1] and ns[-2][1] > 0:
-            ni_g = 100 * (ns[-1][1] / ns[-2][1] - 1)
-
-        bits = []
-        if rev_g is not None:
-            bits.append(f"Revenue <b>{'+' if rev_g >= 0 else '−'}{abs(rev_g):.1f}%</b>")
-        if ni_g is not None:
-            bits.append(f"net income <b>{'+' if ni_g >= 0 else '−'}{abs(ni_g):.1f}%</b>")
-        st.markdown('<p class="lead">' + (", ".join(bits) + " on last year."
-                    if bits else "Not enough filed history to compare years.") + "</p>",
-                    unsafe_allow_html=True)
-
-        with st.expander(f"Net margin  ·  {f'{margin:,.2f}%' if margin is not None else '—'}"):
-            st.markdown(
-                f"Of every \\$100 customers spend, about \\${margin:.0f} becomes profit."
-                if margin is not None else "Revenue or profit was not tagged in this filing."
-                + "\n\nMargin is the *quality* of sales; revenue is only the quantity. "
-                "A rising revenue line with a falling margin usually means growth is being "
-                "bought with discounts.")
-        with st.expander("Free cash flow  ·  "
-                         + money(fcf, html=False).replace("$", "\\$")):
-            st.markdown(
-                (f"Reported profit was {money(ni, html=False).replace('$', chr(92) + '$')}. "
-                 f"Real spare cash was **{money(fcf, html=False).replace('$', chr(92) + '$')}**."
-                 "\n\n" if ni and fcf is not None else "")
-                + "**Profit is an opinion. Cash is a fact.** Profit involves judgement about "
-                "when to count things. Cash either arrived or it did not.")
-
-    # ---- 4. is it expensive --------------------------------------------
-    elif i == 3:
-        pe = val.pe if val else None
-        if pe:
-            st.markdown('<p class="lead">The <b>P/E ratio</b> — what you pay for every '
-                        + D + "1 of yearly profit.</p>", unsafe_allow_html=True)
-            st.markdown(f'<span class="big">{pe:,.1f}×</span>', unsafe_allow_html=True)
-        else:
-            st.markdown('<p class="lead">A P/E needs a share price, and one is not available '
-                        "here. Everything else on this page still comes from the filing.</p>",
-                        unsafe_allow_html=True)
-        with st.expander("Why the share price alone means nothing"):
-            st.markdown(
-                "A \\$10 share is not cheaper than a \\$200 share.\n\n"
-                "Two companies, both worth \\$100 million. One split itself into 10 million "
-                "shares (\\$10 each), the other into 500,000 (\\$200 each). **Identical "
-                "businesses, identical value, wildly different share prices.**\n\n"
-                "What matters is the price against what the company earns.")
-
-    # ---- 5. the score ---------------------------------------------------
-    else:
         st.markdown('<p class="lead">The scorecard rates <b>what the filings show</b> — five '
                     "things the company has already reported.</p>", unsafe_allow_html=True)
         colour = {"good": "var(--up)", "mid": "var(--warn)", "bad": "var(--down)"}[card.tone]
@@ -688,8 +707,8 @@ def teach_slide(i, eq, latest, card, val=None, quote_=None, px_hist=None):
                     "<b>One number never tells the whole story.</b></p></div>",
                     unsafe_allow_html=True)
 
-    # ---- 6. the quiz ----------------------------------------------------
-    if i == 5:
+    # ---- 4. the quiz ----------------------------------------------------
+    else:
         st.markdown('<p class="lead">Five questions on what you have just read, '
                     "using <b>this company's own numbers</b>.</p>",
                     unsafe_allow_html=True)
@@ -706,6 +725,7 @@ def quiz_slide(eq, latest, val, quote_):
     margin = None if (ni is None or not rev) else 100 * ni / rev
     ocf, capex = latest.get("ocf"), latest.get("capex")
     fcf = None if (ocf is None or capex is None) else ocf - capex
+    ni = latest.get("net_income")
     pe = val.pe if val else None
     dy = val.dividend_yield if val else None
     q = quote_
@@ -769,10 +789,8 @@ def quiz_slide(eq, latest, val, quote_):
             st.caption(f"{len(done)} of {len(qs)} answered.")
 
 TEACH_TITLES = [
-    "What am I buying?",
+    "What is a stock?",
     "The words you will see",
-    "Is it getting better?",
-    "Is it expensive?",
     "What is the score?",
     "Now it's your turn",
 ]
@@ -969,38 +987,6 @@ if have:
                 f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
     st.caption("Green is the direction you would rather see — for debt that means falling. "
                "The last column compares the newest year with the oldest shown.")
-
-# --------------------------------------------------------------------------
-# 02 where the money goes
-# --------------------------------------------------------------------------
-
-gross = latest.get("gross_profit")
-ebit = latest.get("ebit")
-capex = latest.get("capex")
-if rev and (gross is not None or ebit is not None):
-    sh("Where the money goes", latest.label)
-    lines = [("Revenue", "total sales", rev, "var(--acc)")]
-    if gross is not None:
-        lines.append(("Cost of revenue", "making the product", -(rev - gross), "var(--c5)"))
-        lines.append(("Gross profit", "what is left", gross, "var(--c3)"))
-    if ebit is not None:
-        if gross is not None:
-            lines.append(("Operating costs", "running the business", -(gross - ebit), "var(--c5)"))
-        lines.append(("Operating income", "EBIT — before interest and tax", ebit, "var(--up)"))
-    if capex is not None:
-        lines.append(("Capital spending", "new plant, kit, technology", -capex, "var(--c4)"))
-
-    body = "".join(
-        f'<div class="frow"><span class="flab"><b>{E(l)}</b><i>{E(g)}</i></span>'
-        f'<span class="fbar"><div style="width:{max(abs(v) / rev * 100, 1.5):.1f}%;'
-        f'background:{col}"></div></span>'
-        f'<span class="famt">{money(v)}</span></div>'
-        for l, g, v, col in lines)
-    keep = f"{100 * ebit / rev:.0f}" if ebit is not None else None
-    st.markdown(f'<div class="panel">{body}'
-                + (f'<p class="cfoot">{D}{keep} of every {D}100 of sales survives to '
-                   "operating income.</p>" if keep else "")
-                + "</div>", unsafe_allow_html=True)
 
 # --------------------------------------------------------------------------
 # 03 this year so far
