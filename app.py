@@ -40,6 +40,7 @@ st.markdown("""
   --line:#332B60; --line-2:#3D3470;
   --text:#EDEAF7; --text-2:#B3ACD1; --text-3:#7F779E;
   --acc:#A98BFF; --acc-2:#C7B2FF; --acc-dim:#6E5AB8;
+  --teach:#4FC98C; --teach-2:#7FE0B0; --teach-dim:#2E7A55;
   --up:#5FD69B; --up-bg:#16341F; --down:#FF7B8A; --down-bg:#3A1A25;
   --warn:#F0C46A; --warn-bg:#3A2E17;
   --c1:#A98BFF; --c2:#5FD69B; --c3:#F0C46A; --c4:#6FC6E8; --c5:#FF9BB0;
@@ -242,6 +243,51 @@ h2.co{margin:.55rem 0 .3rem;font-size:1.8rem;font-weight:800}
 @media (max-width:640px){.trio{grid-template-columns:1fr;gap:1.1rem}}
 .tr b{display:block;font-size:.9rem;margin-bottom:.2rem;color:#FFFFFF}
 .tr span{font-size:.83rem;color:var(--text-2);line-height:1.5}
+
+
+/* ---- mode toggle: a segmented control, not radio circles ---------------- */
+div[role="radiogroup"]{gap:.25rem !important;padding:.25rem;background:var(--surf);
+  border:1px solid var(--line-2);border-radius:9px;display:inline-flex !important;
+  margin:1.1rem 0 .2rem}
+div[role="radiogroup"] > label{margin:0 !important;padding:.45rem 1.05rem !important;
+  border-radius:6px;cursor:pointer;transition:all .15s;background:transparent}
+div[role="radiogroup"] > label:hover{background:var(--surf-2)}
+/* hide the circle itself */
+div[role="radiogroup"] > label > div:first-child{display:none !important}
+div[role="radiogroup"] > label p{font-size:.87rem !important;font-weight:600 !important;
+  color:var(--text-3) !important;margin:0 !important}
+div[role="radiogroup"] > label:has(input:checked){background:var(--teach)}
+div[role="radiogroup"] > label:has(input:checked) p{color:#0F1F17 !important;font-weight:700 !important}
+
+/* ---- teach mode is green; research stays violet ------------------------ */
+.teach .gbar .gs.done, .teach .gbar .gs.now{background:var(--teach)}
+.teach .gnum{color:var(--teach)}
+.teach .lead b{color:var(--teach-2)}
+.teach .big{color:var(--teach-2)}
+.teach .big.up{color:var(--up)} .teach .big.down{color:var(--down)}
+.teach .gl .t b{color:#FFFFFF}
+.teach .gl .t span{color:var(--teach-2)}
+.teach .picker{color:var(--teach)}
+.teach .finish{background:rgba(95,214,155,.09);border-color:var(--teach-dim)}
+.teach .finish h4{color:var(--teach-2)}
+.teach div[data-testid="stExpander"]{border-color:var(--teach-dim) !important}
+.teach div[data-testid="stExpander"] summary:hover{color:var(--teach-2) !important}
+.teach .stSlider [data-baseweb="slider"] [role="slider"]{background:var(--teach) !important;
+  box-shadow:0 2px 10px -2px rgba(95,214,155,.8) !important}
+.teach .stSlider [data-baseweb="slider"] div[data-testid="stSliderTickBar"]{color:var(--text-3)}
+.teach .btn-next button{background:var(--teach) !important;border-color:var(--teach) !important;
+  color:#0F1F17 !important}
+
+
+/* the glossary links read as the bottom row of the strip, not as controls */
+.five{border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom:0}
+div[data-testid="stHorizontalBlock"]:has(button[kind]) .stButton button{
+  background:var(--surf);border:1px solid var(--line);border-top:0;border-radius:0;
+  color:var(--acc);font-size:.62rem;font-weight:700;padding:.45rem .3rem;
+  letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+div[data-testid="stHorizontalBlock"]:has(button[kind]) .stButton button:hover{
+  background:var(--surf-2);color:var(--acc-2)}
+div[data-testid="stHorizontalBlock"]{gap:1px !important}
 
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
@@ -683,6 +729,26 @@ mode = st.radio("View", _views, index=_want if _want is not None else 0,
                 horizontal=True, label_visibility="collapsed", key="mode")
 
 if mode == "Teach me":
+    # Scope the green palette to this view only; research stays violet.
+    st.markdown('<div class="teach"></div>'
+                "<style>section.main{--scope:teach}</style>", unsafe_allow_html=True)
+    st.markdown("""<style>
+      div[role="radiogroup"] ~ div .gs.done, div[role="radiogroup"] ~ div .gs.now,
+      .gs.done, .gs.now{background:var(--teach) !important}
+      .gnum{color:var(--teach) !important}
+      .lead b{color:var(--teach-2) !important}
+      .finish{background:rgba(95,214,155,.09) !important;
+        border-color:var(--teach-dim) !important}
+      .finish h4{color:var(--teach-2) !important}
+      .gl .t span{color:var(--teach-2) !important}
+      .picker{color:var(--teach) !important}
+      div[data-testid="stExpander"]{border-color:var(--teach-dim) !important}
+      [data-baseweb="slider"] [role="slider"]{background:var(--teach) !important;
+        box-shadow:0 2px 10px -2px rgba(95,214,155,.75) !important}
+      [data-baseweb="slider"] div[data-testid="stSliderThumbValue"]{color:var(--teach) !important}
+      .stButton button{border-color:var(--teach-dim) !important}
+      .stButton button:hover{border-color:var(--teach) !important;color:var(--teach) !important}
+    </style>""", unsafe_allow_html=True)
     step = st.session_state.get("step", 0)
     n = len(TEACH_TITLES)
     st.markdown('<div class="gbar">' + "".join(
@@ -733,13 +799,13 @@ strip = [
 st.markdown('<div class="five">' + "".join(
     f'<div class="fv"><span class="k">{E(k)}</span>'
     f'<span class="v {t}">{v}</span><span class="d">{d}</span>'
-    + (f'<span class="learn">what does this mean?</span>' if g else "")
     + "</div>" for k, v, t, d, g in strip) + "</div>", unsafe_allow_html=True)
 
-if any(g for *_, g in strip):
-    cols = st.columns(5)
-    for col, (k, _, _, _, g) in zip(cols, [x for x in strip if x[4]]):
-        if col.button(f"What is {k}?", key=f"gl_{g}", use_container_width=True):
+glossable = [x for x in strip if x[4]]
+if glossable:
+    cols = st.columns(len(glossable))
+    for col, (k, _, _, _, g) in zip(cols, glossable):
+        if col.button("what does this mean? →", key=f"gl_{g}", use_container_width=True):
             # The radio owns st.session_state["mode"], so it cannot be written
             # here. Set a flag the radio's index reads on the next run.
             st.session_state["goto_teach"] = True
