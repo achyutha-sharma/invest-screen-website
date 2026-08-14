@@ -16,7 +16,7 @@ import streamlit as st
 from filing_text import latest_filings, read_filing
 from peers import suggest
 from prices import PriceClient
-from quiz import build as quiz_build, grade as quiz_grade
+from quiz import build as quiz_build, grade as quiz_grade, pick as quiz_pick
 from scorecard import score
 from sec_equity import extract_equity, pe_history, value
 from sec_ratios import SecClient
@@ -446,8 +446,7 @@ POPULAR = [("NKE", "Nike"), ("SBUX", "Starbucks"), ("NFLX", "Netflix"),
 
 if "cik" not in st.session_state:
     st.markdown('<h1 class="hero">Research a stock <em>properly</em>.</h1>'
-                '<p class="sub">Straight from SEC filings. Professional terms, plainly '
-                "defined, and never a recommendation.</p>", unsafe_allow_html=True)
+                '<p class="sub">Straight from SEC filings, plainly explained.</p>', unsafe_allow_html=True)
 
 query = st.text_input("Company name or ticker", placeholder="Nike, Starbucks, Netflix").strip()
 
@@ -467,8 +466,7 @@ if "cik" not in st.session_state and not query:
       <div class="tr"><b>Filed, not estimated</b>
         <span>Every figure comes from a filing made to the SEC.</span></div>
       <div class="tr"><b>Flags what does not apply</b>
-        <span>Some ratios are meaningless for some filers. We say so instead of
-        printing them.</span></div>
+        <span>Some ratios are meaningless for some filers. We say so.</span></div>
       <div class="tr"><b>No recommendations</b>
         <span>What happened, and what the price assumes. You decide.</span></div>
     </div>''', unsafe_allow_html=True)
@@ -712,10 +710,13 @@ def quiz_slide(eq, latest, val, quote_):
         revenue_growth=None, income_growth=None,
     )
 
+    rnd = st.session_state.get("quiz_round", 0)
+    qs = quiz_pick(qs, rnd) if qs else []
+
     if qs:
         answers = st.session_state.setdefault("quiz", {})
         for n, question in enumerate(qs):
-            key = f"q{n}"
+            key = f"q{rnd}_{n}"
             st.markdown(f'<div class="qq"><span class="qn">Question {n + 1}</span>'
                         f'<p>{E(question.prompt).replace("$", D)}</p></div>',
                         unsafe_allow_html=True)
@@ -735,7 +736,8 @@ def quiz_slide(eq, latest, val, quote_):
                         + "”. " + question.why.replace("$", D) + "</div>",
                         unsafe_allow_html=True)
 
-        done = [v for k, v in answers.items() if k in {f"q{i}" for i in range(len(qs))}]
+        done = [v for k, v in answers.items()
+                if k in {f"q{rnd}_{i}" for i in range(len(qs))}]
         if len(done) == len(qs):
             got = sum(done)
             verdict, note = quiz_grade(got, len(qs))
@@ -743,14 +745,17 @@ def quiz_slide(eq, latest, val, quote_):
             st.markdown(f'<div class="qscore"><span class="big {tone}">{got}/{len(qs)}</span>'
                         f'<p class="bigsub"><b>{E(verdict)}.</b> {E(note)}</p></div>',
                         unsafe_allow_html=True)
-            if st.button("Try again", key="quiz_reset"):
-                for i in range(len(qs)):
-                    st.session_state.pop(f"quiz_q{i}", None)
+            if st.button("Try five more", key="quiz_reset"):
+                # Clearing the widget keys deselects the radios; bumping the
+                # round draws a different five with the options reordered.
+                for k in list(st.session_state):
+                    if k.startswith("quiz_q"):
+                        st.session_state.pop(k, None)
                 st.session_state["quiz"] = {}
+                st.session_state["quiz_round"] = rnd + 1
                 st.rerun()
         else:
-            st.caption(f"{len(done)} of {len(qs)} answered. Nothing here is scored against you — "
-                       "the explanations are the point.")
+            st.caption(f"{len(done)} of {len(qs)} answered.")
 
 TEACH_TITLES = [
     "What am I buying?",
@@ -1003,9 +1008,8 @@ if ft and ft.risks:
     st.markdown('<div class="panel risk">'
                 + "".join(f'<div class="rr">{E(r)}</div>' for r in ft.risks)
                 + "</div>", unsafe_allow_html=True)
-    st.caption("Taken from the filing's risk factors. A company listing a risk does not mean "
-               "it is happening — filers list everything they can think of, partly for legal "
-               "protection.")
+    st.caption("From the filing's risk factors. Listed does not mean happening — filers "
+               "list everything, partly for legal cover.")
 
 # --------------------------------------------------------------------------
 # 07 peers
@@ -1016,8 +1020,7 @@ if ft and ft.risks:
 sh("07", "Compare with peers", "tap a company to open it")
 
 suggested, why_peers = suggest(ticker, sic=str(prof.get("sic") or ""))
-chosen = st.session_state.get("peer_edit", "")
-peer_list = [p.strip().upper() for p in chosen.split(",") if p.strip()][:4] if chosen else suggested
+peer_list = suggested
 
 rows, missed = [], []
 for tk in peer_list:
@@ -1076,16 +1079,11 @@ if rows:
             for k in ("peer_edit", "step"):
                 st.session_state.pop(k, None)
             st.rerun()
-    st.caption(why_peers + " Comparing against similar businesses is more honest than a fixed "
-               "threshold, because what counts as a normal multiple differs completely between "
-               "industries.")
+    st.caption(why_peers + " What counts as a normal multiple differs completely between "
+               "industries, so a peer set beats a fixed threshold.")
 elif why_peers and not peer_list:
     st.caption(why_peers)
 
-with st.expander("Choose different companies"):
-    st.text_input("Tickers, comma separated", key="peer_edit", placeholder="LOW, TGT, WMT")
-    if missed:
-        st.caption("Could not use: " + ", ".join(missed))
 
 # --------------------------------------------------------------------------
 # 09 what would have to happen
@@ -1118,8 +1116,8 @@ if eps and eps > 0:
                '<p class="cfoot">No live price, so this starts from the current EPS at '
                f"{start_pe:.0f}× rather than the market price.</p>")
             + "</div>", unsafe_allow_html=True)
-    st.caption("Not a prediction. Set growth to 10% then drag the P/E down to 15× — profits "
-               "double and you still lose money, because what people will pay fell.")
+    st.caption("Not a prediction. Try 10% growth with the P/E at 15× — profits double and "
+               "you still lose money.")
 
 # --------------------------------------------------------------------------
 # 10 filings
