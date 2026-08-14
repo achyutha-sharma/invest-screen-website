@@ -128,6 +128,18 @@ class Period:
     fp: str                                   # "FY", "Q1", "Q2", "Q3", "Q4"
     inputs: dict[str, float | None] = field(default_factory=dict)
     sources: dict[str, str] = field(default_factory=dict)
+    # The same quarter a year earlier, where it was filed. Seasonal businesses
+    # can only be read against their own equivalent period.
+    year_ago: dict[str, float | None] = field(default_factory=dict)
+
+    def change(self, key: str) -> float | None:
+        """Percent change against the same period a year earlier."""
+        now, then = self.inputs.get(key), self.year_ago.get(key)
+        if now is None or then in (None, 0):
+            return None
+        if then < 0:                      # a swing out of loss has no percentage
+            return None
+        return 100 * (now / then - 1)
 
     @property
     def label(self) -> str:
@@ -375,6 +387,17 @@ def _current_year_quarters(store: EquityStore, latest_fy_end: date) -> list[Peri
             p.inputs[key], p.sources[key] = val, tag or MISSING
         tag, val = store.per_share(EPS_DILUTED, end, quarterly=True)
         p.inputs["eps"], p.sources["eps"] = val, tag or MISSING
+
+        # The equivalent quarter a year earlier. 365 days back lands within a
+        # few days of the same fiscal quarter end for every calendar.
+        prior = date(end.year - 1, end.month, min(end.day, 28))
+        for key, chain in (("revenue", REVENUE), ("net_income", NET_INCOME),
+                           ("ebit", OPERATING_INCOME)):
+            _, val = store.quarterly(chain, prior)
+            p.year_ago[key] = val
+        _, val = store.per_share(EPS_DILUTED, prior, quarterly=True)
+        p.year_ago["eps"] = val
+
         out.append(p)
     return out
 
