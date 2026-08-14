@@ -1,5 +1,5 @@
 """
-Value Screen — research a stock from its SEC filings.
+Invest Screen — research a stock from its SEC filings.
 
 Every figure on this page comes from a filing. Share price is the one exception
 and is optional: without a feed, the valuation rows say so and the other eight
@@ -21,7 +21,7 @@ from scorecard import score
 from sec_equity import extract_equity, pe_history, value
 from sec_ratios import SecClient
 
-st.set_page_config(page_title="Value Screen", page_icon="📈", layout="centered")
+st.set_page_config(page_title="Invest Screen", page_icon="📈", layout="centered")
 
 E = html.escape
 D = "&#36;"          # for markdown, where Streamlit reads bare $ as LaTeX
@@ -476,15 +476,27 @@ div[data-testid="stExpander"] summary{color:var(--text) !important}
 
 st.markdown('<span class="masthome"></span>', unsafe_allow_html=True)
 badge, word = st.columns([1, 9])
-badge.markdown('<span class="logo">VS</span>', unsafe_allow_html=True)
-if word.button("ValueScreen", key="home_logo"):
+badge.markdown('<span class="logo">IS</span>', unsafe_allow_html=True)
+if word.button("InvestScreen", key="home_logo"):
+    go_home()
+st.markdown('<div class="mastline"></div>', unsafe_allow_html=True)
+
+def go_home():
+    """Clear every page and selection, and return to the search screen."""
     for k in ("cik", "ticker", "name", "fund", "step", "searched",
               "quiz", "quiz_round", "mode", "peer_edit"):
         st.session_state.pop(k, None)
     for k in [k for k in st.session_state if k.startswith(("quiz_", "gl_", "hit_"))]:
         st.session_state.pop(k, None)
     st.rerun()
-st.markdown('<div class="mastline"></div>', unsafe_allow_html=True)
+
+
+def home_button(key: str):
+    """A home link at the top of a page. Placed before the content rather than
+    after it, so it is reachable without scrolling to the bottom."""
+    if st.button("← Home", key=key):
+        go_home()
+
 
 def secret(name: str, default: str = "") -> str:
     """Read a secret from either source.
@@ -711,9 +723,7 @@ if st.session_state.get("fund"):
 
     fq = quote(fd.ticker)
 
-    if st.button("← Back"):
-        st.session_state.pop("fund", None)
-        st.rerun()
+    home_button("home_fund")
 
     day_badge = ""
     if fq.available and fq.day_change_pct is not None:
@@ -1177,10 +1187,7 @@ if mode == "Teach me":
     st.markdown('<p class="disc">Every figure comes from filings made to the U.S. Securities '
                 "and Exchange Commission. Educational only — not advice to buy or sell "
                 "anything.</p>", unsafe_allow_html=True)
-    if st.button("← Search another company"):
-        for k in ("cik", "ticker", "name", "step", "searched", "quiz", "quiz_round"):
-            st.session_state.pop(k, None)
-        st.rerun()
+    home_button("home_teach")
     st.stop()
 
 strip = [
@@ -1538,7 +1545,4 @@ st.markdown('<p class="disc">Figures come from SEC filings. Share price and toda
             "move come from a market feed. Educational research only — not advice.</p>",
             unsafe_allow_html=True)
 
-if st.button("← Search another company"):
-    for k in ("cik", "ticker", "name", "step", "searched", "quiz", "quiz_round"):
-        st.session_state.pop(k, None)
-    st.rerun()
+home_button("home_bottom")
