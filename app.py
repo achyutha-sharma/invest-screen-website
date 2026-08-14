@@ -14,6 +14,7 @@ import os
 import streamlit as st
 
 from filing_text import latest_filings, read_filing
+import funds as funds_data
 from prices import PriceClient
 from quiz import build as quiz_build, grade as quiz_grade, pick as quiz_pick
 from scorecard import score
@@ -398,6 +399,19 @@ h2.co .day{font-size:.7rem;vertical-align:middle}
 .mk .mv2.up{color:var(--up)} .mk .mv2.down{color:var(--down)}
 .mk .mw{display:block;font-size:.7rem;color:var(--text-3);margin-top:.2rem;line-height:1.4}
 
+
+.fbody{font-size:.95rem;color:var(--text-2);line-height:1.7;margin:0;max-width:68ch}
+.movegrid{display:grid;grid-template-columns:1fr 1fr;gap:1.4rem}
+@media (max-width:640px){.movegrid{grid-template-columns:1fr;gap:1rem}}
+.mhead{display:block;font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;
+  font-weight:700;margin-bottom:.5rem}
+.mhead.up{color:var(--up)} .mhead.down{color:var(--down)}
+.mcol p{position:relative;padding:.5rem 0 .5rem 1.1rem;margin:0;font-size:.88rem;
+  color:var(--text-2);line-height:1.6;border-bottom:1px solid var(--line)}
+.mcol p:last-child{border-bottom:0}
+.mcol p::before{content:"";position:absolute;left:.2rem;top:1.05em;width:5px;height:5px;
+  border-radius:50%;background:var(--text-3)}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -546,7 +560,7 @@ if "cik" not in st.session_state and not query and prices.configured:
         except Exception:
             continue
         if qt.available and qt.day_change_pct is not None:
-            mkt.append((label, what, qt.day_change_pct))
+            mkt.append((tk, label, what, qt.day_change_pct))
     if mkt:
         st.markdown('<p class="picker">The market today</p>'
                     + '<div class="mkt">' + "".join(
@@ -554,7 +568,13 @@ if "cik" not in st.session_state and not query and prices.configured:
                         f'<span class="mv2 {"up" if p >= 0 else "down"}">'
                         f'{"▲" if p >= 0 else "▼"} {abs(p):.2f}%</span>'
                         f'<span class="mw">{E(w)}</span></div>'
-                        for l, w, p in mkt) + "</div>", unsafe_allow_html=True)
+                        for _, l, w, p in mkt) + "</div>", unsafe_allow_html=True)
+        cols = st.columns(len(mkt))
+        for col, (tk, label, _, _) in zip(cols, mkt):
+            if col.button(f"what is {label}? →", key=f"fund_{tk}",
+                          use_container_width=True):
+                st.session_state["fund"] = tk
+                st.rerun()
         st.caption("Funds tracking whole markets. They hold shares in hundreds of "
                    "companies rather than running a business, so there is no filing to "
                    "research — but they tell you whether a stock moved on its own news or "
@@ -575,6 +595,120 @@ if query:
     st.session_state["cik"] = chosen["cik"]
     st.session_state["ticker"] = chosen["ticker"]
     st.session_state["name"] = chosen["name"]
+
+# --------------------------------------------------------------------------
+# Fund page
+# --------------------------------------------------------------------------
+# A fund has no filing to read, so this page is explanation rather than
+# analysis: what the thing is, what moves it, and what to be wary of. Nothing
+# here is computed, because nothing here changes with the price.
+
+if st.session_state.get("fund"):
+    fd = funds_data.get(st.session_state["fund"])
+    if fd is None:
+        st.session_state.pop("fund", None)
+        st.rerun()
+
+    fq = quote(fd.ticker)
+
+    if st.button("← Back"):
+        st.session_state.pop("fund", None)
+        st.rerun()
+
+    day_badge = ""
+    if fq.available and fq.day_change_pct is not None:
+        tone = "good" if fq.day_change_pct >= 0 else "weak"
+        day_badge = (f'<span class="day {tone}">'
+                     f'{"▲" if fq.day_change_pct >= 0 else "▼"} '
+                     f'{abs(fq.day_change_pct):.2f}% today</span>')
+
+    st.markdown(f'<span class="tk">{E(fd.ticker)}</span>'
+                f'<h2 class="co">{E(fd.name)}{day_badge}</h2>'
+                f'<p class="one">{E(fd.one_line)}</p>', unsafe_allow_html=True)
+
+    if fq.available:
+        st.markdown('<div class="five" style="grid-template-columns:repeat(2,1fr)">'
+                    f'<div class="fv"><span class="k">Price</span>'
+                    f'<span class="v">{D}{fq.price:,.2f}</span>'
+                    f'<span class="d">one share of the fund</span></div>'
+                    f'<div class="fv"><span class="k">Today</span>'
+                    f'<span class="v {"good" if (fq.day_change_pct or 0) >= 0 else "weak"}">'
+                    + (f'{fq.day_change_pct:+,.2f}%' if fq.day_change_pct is not None else "—")
+                    + f'</span><span class="d">as of {E(fq.as_of)}</span></div></div>',
+                    unsafe_allow_html=True)
+
+    sh("What this actually is")
+    st.markdown(f'<div class="panel"><p class="fbody">{E(fd.what)}</p></div>',
+                unsafe_allow_html=True)
+
+    sh("What moves it")
+    st.markdown('<div class="panel movegrid">'
+                + '<div class="mcol"><span class="mhead up">Goes up when</span>'
+                + "".join(f"<p>{E(x)}</p>" for x in fd.moves_up) + "</div>"
+                + '<div class="mcol"><span class="mhead down">Goes down when</span>'
+                + "".join(f"<p>{E(x)}</p>" for x in fd.moves_down) + "</div>"
+                + "</div>", unsafe_allow_html=True)
+
+    # Price history is not on every free plan, so the chart appears only when
+    # the data does -- and its absence is not treated as an error.
+    hist = prices.monthly(fd.ticker) if prices.configured else []
+    if len(hist) >= 12:
+        sh("How it has moved", f"{hist[0][0][:4]} to {hist[-1][0][:4]}")
+        W, H, L, R, T, B = 780, 200, 44, 12, 14, 24
+        vals = [v for _, v in hist]
+        lo, hi = min(vals), max(vals)
+        pad = (hi - lo) * 0.10 or 1
+        y0, y1 = lo - pad, hi + pad
+
+        def FX(i):
+            return L + (i / max(len(vals) - 1, 1)) * (W - L - R)
+
+        def FY(v):
+            return T + (1 - (v - y0) / (y1 - y0)) * (H - T - B)
+
+        grid = ""
+        for g in range(4):
+            v = y0 + (y1 - y0) * g / 3
+            y = FY(v)
+            grid += (f'<line x1="{L}" y1="{y:.1f}" x2="{W - R}" y2="{y:.1f}" stroke="#332B60"/>'
+                     f'<text x="{L - 7}" y="{y + 3.5:.1f}" text-anchor="end" '
+                     'font-family="IBM Plex Mono,monospace" font-size="9" font-weight="600" '
+                     f'fill="#7F779E">{v:,.0f}</text>')
+        step = max(len(vals) // 5, 1)
+        xl = "".join(
+            f'<text x="{FX(i):.1f}" y="{H - 7}" text-anchor="middle" '
+            'font-family="IBM Plex Mono,monospace" font-size="9" font-weight="600" '
+            f'fill="#7F779E">&#39;{hist[i][0][2:4]}</text>'
+            for i in range(0, len(vals), step))
+        line = " ".join(f"{'L' if i else 'M'}{FX(i):.1f},{FY(v):.1f}"
+                        for i, v in enumerate(vals))
+        rising = vals[-1] >= vals[0]
+        colour = "#5FD69B" if rising else "#FF7B8A"
+        st.markdown(f'''<div class="panel chart">
+          <svg viewBox="0 0 {W} {H}" role="img"
+               aria-label="{E(fd.name)} price since {E(hist[0][0][:4])}">
+            {grid}
+            <path d="{line}" fill="none" stroke="{colour}" stroke-width="2.4"
+              stroke-linejoin="round" stroke-linecap="round"/>
+            <circle cx="{FX(len(vals) - 1):.1f}" cy="{FY(vals[-1]):.1f}" r="3.6"
+              fill="{colour}"/>
+          </svg></div>''', unsafe_allow_html=True)
+        st.caption("Month-end prices. A fund's chart is the whole story — there are no "
+                   "earnings underneath it to compare against.")
+
+    sh("Why it is worth watching")
+    st.markdown(f'<div class="panel"><p class="fbody">{E(fd.why)}</p></div>',
+                unsafe_allow_html=True)
+
+    if fd.watch_out:
+        st.markdown(f'<div class="sfoot"><b>Worth knowing.</b> {E(fd.watch_out)}</div>',
+                    unsafe_allow_html=True)
+
+    st.markdown('<p class="disc">Funds file holdings reports rather than financial '
+                "statements, so there are no ratios here — a fund has no revenue or "
+                "profit of its own. Prices come from a market feed. Educational only.</p>",
+                unsafe_allow_html=True)
+    st.stop()
 
 if "cik" not in st.session_state:
     st.stop()
