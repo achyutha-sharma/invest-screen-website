@@ -374,6 +374,29 @@ div[data-testid="stHorizontalBlock"]:has(button[kind])
 .ln{width:15px;height:2.5px;border-radius:2px;display:inline-block}
 h2.co .day{font-size:.7rem;vertical-align:middle}
 
+
+.movers{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
+  border:1px solid var(--line);border-radius:10px 10px 0 0;overflow:hidden}
+@media (max-width:560px){.movers{grid-template-columns:1fr}}
+.mv{background:var(--surf);padding:.85rem .95rem}
+.mv .mt{display:block;font-family:var(--mono);font-size:.68rem;font-weight:700;
+  letter-spacing:.06em;color:var(--acc)}
+.mv .mp{display:block;font-family:var(--mono);font-size:1.2rem;font-weight:700;
+  color:#FFFFFF;margin-top:.3rem}
+.mv .mc{display:block;font-family:var(--mono);font-size:.78rem;font-weight:700;margin-top:.2rem}
+.mv .mc.up{color:var(--up)} .mv .mc.down{color:var(--down)}
+
+
+/* market strip: context, not companies -- flatter and quieter than the movers */
+.mkt{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);
+  border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:1.6rem}
+@media (max-width:560px){.mkt{grid-template-columns:1fr}}
+.mk{background:var(--bg-2);padding:.75rem .9rem}
+.mk .ml{display:block;font-size:.82rem;font-weight:700;color:var(--text)}
+.mk .mv2{display:block;font-family:var(--mono);font-size:1.05rem;font-weight:700;margin-top:.25rem}
+.mk .mv2.up{color:var(--up)} .mk .mv2.down{color:var(--down)}
+.mk .mw{display:block;font-size:.7rem;color:var(--text-3);margin-top:.2rem;line-height:1.4}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -498,6 +521,85 @@ if "cik" not in st.session_state:
                 '<p class="sub">Straight from SEC filings.</p>', unsafe_allow_html=True)
 
 query = st.text_input("Company name or ticker", placeholder="Search").strip()
+
+# --------------------------------------------------------------------------
+# Movers
+# --------------------------------------------------------------------------
+# Quotes for a small watchlist, ranked by today's move. Scanning the whole
+# market would take thousands of calls a minute, so this is deliberately
+# labelled as a watchlist rather than dressed up as "today's biggest movers".
+
+WATCHLIST = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META",
+             "NKE", "SBUX", "NFLX", "DIS", "KO", "JPM"]
+
+# Ticker, label, and what it tracks. Funds, so no research page exists.
+MARKET = [
+    ("SPY", "S&P 500", "500 large US companies"),
+    ("QQQ", "Nasdaq 100", "the largest non-financial tech names"),
+    ("GLD", "Gold", "bullion held in a vault"),
+]
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def movers(tickers: tuple) -> list[dict]:
+    """Watchlist quotes, biggest move first. Quiet when there is no feed."""
+    out = []
+    for tk in tickers:
+        try:
+            qt = prices.quote(tk)
+        except Exception:
+            continue
+        if qt.available and qt.day_change_pct is not None:
+            out.append({"ticker": tk, "price": qt.price, "pct": qt.day_change_pct})
+    return sorted(out, key=lambda r: abs(r["pct"]), reverse=True)
+
+
+if "cik" not in st.session_state and not query and prices.configured:
+    mkt = []
+    for tk, label, what in MARKET:
+        try:
+            qt = prices.quote(tk)
+        except Exception:
+            continue
+        if qt.available and qt.day_change_pct is not None:
+            mkt.append((label, what, qt.day_change_pct))
+    if mkt:
+        st.markdown('<p class="picker">The market today</p>'
+                    + '<div class="mkt">' + "".join(
+                        f'<div class="mk"><span class="ml">{E(l)}</span>'
+                        f'<span class="mv2 {"up" if p >= 0 else "down"}">'
+                        f'{"▲" if p >= 0 else "▼"} {abs(p):.2f}%</span>'
+                        f'<span class="mw">{E(w)}</span></div>'
+                        for l, w, p in mkt) + "</div>", unsafe_allow_html=True)
+        st.caption("Funds tracking whole markets. They hold shares in hundreds of "
+                   "companies rather than running a business, so there is no filing to "
+                   "research — but they tell you whether a stock moved on its own news or "
+                   "with everything else.")
+
+if "cik" not in st.session_state and not query:
+    rows = movers(tuple(WATCHLIST))[:3] if prices.configured else []
+    if rows:
+        st.markdown('<p class="picker">Moving most today</p>', unsafe_allow_html=True)
+        cards = "".join(
+            f'<div class="mv"><span class="mt">{E(r["ticker"])}</span>'
+            f'<span class="mp">{D}{r["price"]:,.2f}</span>'
+            f'<span class="mc {"up" if r["pct"] >= 0 else "down"}">'
+            f'{"▲" if r["pct"] >= 0 else "▼"} {abs(r["pct"]):.2f}%</span></div>'
+            for r in rows)
+        st.markdown(f'<div class="movers">{cards}</div>', unsafe_allow_html=True)
+
+        cols = st.columns(3)
+        for col, r in zip(cols, rows):
+            if col.button(f"Open {r['ticker']}", key=f"mv_{r['ticker']}",
+                          use_container_width=True):
+                hits = search(r["ticker"])
+                if hits:
+                    st.session_state["cik"] = hits[0]["cik"]
+                    st.session_state["ticker"] = hits[0]["ticker"]
+                    st.session_state["name"] = hits[0]["name"]
+                    st.rerun()
+        st.caption("A short watchlist of large companies, ranked by today's move — not a "
+                   "scan of the whole market.")
 
 if query:
     try:
