@@ -14,6 +14,7 @@ import os
 import streamlit as st
 
 from filing_text import latest_filings, read_filing
+from peers import suggest
 from prices import PriceClient
 from scorecard import score
 from sec_equity import extract_equity, pe_history, value
@@ -233,6 +234,15 @@ h2.co{margin:.55rem 0 .3rem;font-size:1.8rem;font-weight:800}
 .fv .learn{display:block;font-size:.63rem;font-weight:700;color:var(--acc);margin-top:.4rem}
 .stSlider label{color:var(--text-2) !important;font-size:.85rem !important;font-weight:600 !important}
 
+
+.picker{font-size:.66rem;letter-spacing:.13em;text-transform:uppercase;color:var(--text-3);
+  font-weight:700;margin:1.4rem 0 .6rem}
+.trio{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-top:2.2rem;
+  padding-top:1.5rem;border-top:1px solid var(--line)}
+@media (max-width:640px){.trio{grid-template-columns:1fr;gap:1.1rem}}
+.tr b{display:block;font-size:.9rem;margin-bottom:.2rem;color:#FFFFFF}
+.tr span{font-size:.83rem;color:var(--text-2);line-height:1.5}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -346,12 +356,37 @@ def ratio(a, b):
 # Search
 # --------------------------------------------------------------------------
 
+POPULAR = [("NKE", "Nike"), ("SBUX", "Starbucks"), ("NFLX", "Netflix"),
+           ("AAPL", "Apple"), ("HD", "Home Depot"), ("KO", "Coca-Cola")]
+
 if "cik" not in st.session_state:
     st.markdown('<h1 class="hero">Research a stock <em>properly</em>.</h1>'
-                '<p class="sub">Straight from SEC filings. Professional terms, '
-                "plainly defined.</p>", unsafe_allow_html=True)
+                '<p class="sub">Straight from SEC filings. Professional terms, plainly '
+                "defined, and never a recommendation.</p>", unsafe_allow_html=True)
 
 query = st.text_input("Company name or ticker", placeholder="Nike, Starbucks, Netflix").strip()
+
+if "cik" not in st.session_state and not query:
+    st.markdown('<p class="picker">Or start with one of these</p>', unsafe_allow_html=True)
+    for row in (POPULAR[:3], POPULAR[3:]):
+        for col, (tk, nm) in zip(st.columns(3), row):
+            if col.button(nm, key=f"pop_{tk}", use_container_width=True):
+                hits = search(tk)
+                if hits:
+                    st.session_state["cik"] = hits[0]["cik"]
+                    st.session_state["ticker"] = hits[0]["ticker"]
+                    st.session_state["name"] = hits[0]["name"]
+                    st.rerun()
+
+    st.markdown('''<div class="trio">
+      <div class="tr"><b>Filed, not estimated</b>
+        <span>Every figure comes from a filing made to the SEC.</span></div>
+      <div class="tr"><b>Flags what does not apply</b>
+        <span>Some ratios are meaningless for some filers. We say so instead of
+        printing them.</span></div>
+      <div class="tr"><b>No recommendations</b>
+        <span>What happened, and what the price assumes. You decide.</span></div>
+    </div>''', unsafe_allow_html=True)
 
 if query:
     try:
@@ -370,7 +405,6 @@ if query:
     st.session_state["name"] = chosen["name"]
 
 if "cik" not in st.session_state:
-    st.caption("Try Nike, Starbucks or Netflix.")
     st.stop()
 
 cik = st.session_state["cik"]
@@ -710,16 +744,16 @@ if rev and (gross is not None or ebit is not None):
 
 if eq.quarters:
     sh("03", "This year so far", f"{len(eq.quarters)} of 4 quarters filed")
-    ytd = sum(q.get("revenue") for q in eq.quarters if q.get("revenue"))
+    ytd = sum(qq.get("revenue") for qq in eq.quarters if qq.get("revenue"))
     run = ytd / len(eq.quarters) * 4
     last_year = rev
     cells = ""
     for i in range(4):
         if i < len(eq.quarters):
-            q = eq.quarters[i]
-            qeps = q.get("eps")
-            cells += (f'<div class="qc"><span class="ql">{q.fp}</span>'
-                      f'<span class="qv">{money(q.get("revenue"))}</span>'
+            qq = eq.quarters[i]
+            qeps = qq.get("eps")
+            cells += (f'<div class="qc"><span class="ql">{qq.fp}</span>'
+                      f'<span class="qv">{money(qq.get("revenue"))}</span>'
                       f'<span class="qs">'
                       + (f'{D}{qeps:,.2f} per share' if qeps is not None else "EPS not filed")
                       + "</span></div>")
@@ -836,54 +870,74 @@ if ft and ft.risks:
 # Typed by the reader rather than parsed from the filing. Deciding who counts
 # as a peer is a judgement, and a chosen set beats a guessed one.
 
-sh("07", "Compare with peers", "type tickers, comma separated")
-peer_raw = st.text_input("Peers", placeholder="LOW, TGT", label_visibility="collapsed",
-                         key="peers")
-if peer_raw.strip():
-    wanted = [p.strip().upper() for p in peer_raw.split(",") if p.strip()][:4]
-    rows, missed = [], []
-    for tk in wanted:
-        hits = search(tk)
-        if not hits or hits[0]["cik"] == cik:
-            missed.append(tk)
-            continue
-        try:
-            peq = extract_equity(facts(hits[0]["cik"]), cik=hits[0]["cik"])
-            pq = quote(hits[0]["ticker"])
-            pv = value(peq, price=pq.price if pq.available else None)
-            pl = peq.latest
-            pm = (None if pl.get("net_income") is None or not pl.get("revenue")
-                  else 100 * pl["net_income"] / pl["revenue"])
-            rows.append((peq.entity.split(",")[0].title(), pv.pe, pm, pv.dividend_yield,
-                         pq.day_change_pct))
-        except Exception:
-            missed.append(tk)
+sh("07", "Compare with peers", "tap a company to open it")
 
-    if rows:
-        head = ("<tr><th>Company</th><th>P/E</th><th>Net margin</th>"
-                "<th>Div. yield</th><th>Today</th></tr>")
+suggested, why_peers = suggest(ticker, sic=str(prof.get("sic") or ""))
+chosen = st.session_state.get("peer_edit", "")
+peer_list = [p.strip().upper() for p in chosen.split(",") if p.strip()][:4] if chosen else suggested
 
-        def cell(v, suffix="", dp=2):
-            return "—" if v is None else f"{v:,.{dp}f}{suffix}"
+rows, missed = [], []
+for tk in peer_list:
+    hits = search(tk)
+    if not hits or hits[0]["cik"] == cik:
+        missed.append(tk)
+        continue
+    try:
+        h = hits[0]
+        peq = extract_equity(facts(h["cik"]), cik=h["cik"])
+        pq = quote(h["ticker"])
+        pv = value(peq, price=pq.price if pq.available else None)
+        pl = peq.latest
+        pm = (None if pl.get("net_income") is None or not pl.get("revenue")
+              else 100 * pl["net_income"] / pl["revenue"])
+        rows.append({"cik": h["cik"], "ticker": h["ticker"],
+                     "name": peq.entity.split(",")[0].title(),
+                     "pe": pv.pe, "margin": pm, "dy": pv.dividend_yield,
+                     "day": pq.day_change_pct})
+    except Exception:
+        missed.append(tk)
 
-        def daycell(v):
-            if v is None:
-                return "—"
-            return (f'<span style="color:var(--{"up" if v >= 0 else "down"})">'
-                    f'{"▲" if v >= 0 else "▼"} {abs(v):.2f}%</span>')
+if rows:
+    def cell(v, suffix="", dp=2):
+        return "—" if v is None else f"{v:,.{dp}f}{suffix}"
 
-        body = (f'<tr class="self"><td>{E(eq.entity.split(",")[0].title())}</td>'
-                f"<td>{cell(pe, '×')}</td><td>{cell(margin, '%')}</td>"
-                f"<td>{cell(dy, '%')}</td><td>{daycell(q.day_change_pct)}</td></tr>")
-        for n, ppe, pmg, pdy, pdc in rows:
-            body += (f"<tr><td>{E(n)}</td><td>{cell(ppe, '×')}</td>"
-                     f"<td>{cell(pmg, '%')}</td><td>{cell(pdy, '%')}</td>"
-                     f"<td>{daycell(pdc)}</td></tr>")
-        st.markdown(f'<div class="panel"><table class="comp"><thead>{head}</thead>'
-                    f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
-        st.caption("Peers you chose. Comparing against a company's own competitors is more "
-                   "honest than a fixed threshold, because what counts as a normal multiple "
-                   "differs completely between industries.")
+    def daycell(v):
+        if v is None:
+            return "—"
+        return (f'<span style="color:var(--{"up" if v >= 0 else "down"})">'
+                f'{"▲" if v >= 0 else "▼"} {abs(v):.2f}%</span>')
+
+    head = ("<tr><th>Company</th><th>P/E</th><th>Net margin</th>"
+            "<th>Div. yield</th><th>Today</th></tr>")
+    body = (f'<tr class="self"><td>{E(eq.entity.split(",")[0].title())}</td>'
+            f"<td>{cell(pe, '×')}</td><td>{cell(margin, '%')}</td>"
+            f"<td>{cell(dy, '%')}</td><td>{daycell(q.day_change_pct)}</td></tr>")
+    for r in rows:
+        body += (f'<tr><td>{E(r["name"])}</td><td>{cell(r["pe"], "×")}</td>'
+                 f'<td>{cell(r["margin"], "%")}</td><td>{cell(r["dy"], "%")}</td>'
+                 f'<td>{daycell(r["day"])}</td></tr>')
+    st.markdown(f'<div class="panel"><table class="comp"><thead>{head}</thead>'
+                f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
+
+    # Tapping a peer opens it, which is the whole point of showing the table.
+    cols = st.columns(min(len(rows), 4))
+    for col, r in zip(cols, rows):
+        if col.button(f"Open {r['ticker']}", key=f"peer_{r['ticker']}",
+                      use_container_width=True):
+            st.session_state["cik"] = r["cik"]
+            st.session_state["ticker"] = r["ticker"]
+            st.session_state["name"] = r["name"]
+            for k in ("peer_edit", "step"):
+                st.session_state.pop(k, None)
+            st.rerun()
+    st.caption(why_peers + " Comparing against similar businesses is more honest than a fixed "
+               "threshold, because what counts as a normal multiple differs completely between "
+               "industries.")
+elif why_peers and not peer_list:
+    st.caption(why_peers)
+
+with st.expander("Choose different companies"):
+    st.text_input("Tickers, comma separated", key="peer_edit", placeholder="LOW, TGT, WMT")
     if missed:
         st.caption("Could not use: " + ", ".join(missed))
 
