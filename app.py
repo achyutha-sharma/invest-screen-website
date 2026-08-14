@@ -13,8 +13,10 @@ import os
 
 import streamlit as st
 
+from filing_text import latest_filings, read_filing
+from prices import PriceClient
 from scorecard import score
-from sec_equity import extract_equity, value
+from sec_equity import extract_equity, pe_history, value
 from sec_ratios import SecClient
 
 st.set_page_config(page_title="Value Screen", page_icon="📈", layout="centered")
@@ -192,6 +194,45 @@ h2.co{margin:.55rem 0 .3rem;font-size:1.8rem;font-weight:800}
 .finish h4{margin:0 0 .5rem;font-size:1rem;color:#FFFFFF}
 .finish p{margin:0;font-size:.9rem;color:var(--text-2);max-width:56ch}
 
+
+/* quotes, risks, peers, filings */
+.quote p{margin:0 0 .6rem;font-size:.92rem;color:var(--text-2);line-height:1.68}
+.quote p:last-of-type{margin-bottom:0}
+.quote .src{display:block;font-family:var(--mono);font-size:.68rem;color:var(--text-3);
+  margin-top:.8rem;font-weight:600}
+.risk .rr{padding:.7rem 0;border-bottom:1px solid var(--line);font-size:.9rem;color:var(--text-2)}
+.risk .rr:first-child{padding-top:0} .risk .rr:last-child{border-bottom:0;padding-bottom:0}
+.comp{width:100%;border-collapse:collapse}
+.comp th{font-size:.6rem;letter-spacing:.12em;text-transform:uppercase;color:var(--text-3);
+  font-weight:700;padding:.55rem .7rem;text-align:right;border-bottom:1px solid var(--line)}
+.comp th:first-child{text-align:left}
+.comp td{padding:.6rem .7rem;text-align:right;font-family:var(--mono);font-size:.9rem;
+  font-weight:700;color:#FFFFFF;border-bottom:1px solid var(--line)}
+.comp tr:last-child td{border-bottom:0}
+.comp td:first-child{text-align:left;font-family:'Archivo',sans-serif}
+.comp tr.self td{background:rgba(169,139,255,.09)}
+.comp tr.self td:first-child{color:var(--acc)}
+.feed{list-style:none;margin:0;padding:0}
+.feed li{display:flex;gap:.8rem;padding:.7rem 0;border-bottom:1px solid var(--line);
+  align-items:baseline}
+.feed li:first-child{padding-top:0} .feed li:last-child{border-bottom:0;padding-bottom:0}
+.ftype{font-family:var(--mono);font-size:.61rem;font-weight:700;padding:.22rem .42rem;
+  border-radius:4px;flex:0 0 auto}
+.ftype.q{background:rgba(111,198,232,.15);color:#6FC6E8}
+.ftype.k{background:rgba(169,139,255,.15);color:var(--acc)}
+.ftype.e{background:rgba(95,214,155,.13);color:var(--up)}
+.ftype.o{background:rgba(240,196,106,.13);color:var(--warn)}
+.fmain{flex:1;min-width:0;font-size:.89rem}
+.fmain a{color:var(--text-2);text-decoration:none}
+.fmain a:hover{color:var(--acc);text-decoration:underline}
+.fwhen{font-family:var(--mono);font-size:.7rem;color:var(--text-3);flex:0 0 auto}
+.day{display:inline-flex;align-items:center;gap:.3rem;font-family:var(--mono);font-size:.72rem;
+  font-weight:700;padding:.22rem .5rem;border-radius:5px;margin-left:.5rem}
+.day.good{background:var(--up-bg);color:var(--up);border:1px solid #22502F}
+.day.weak{background:var(--down-bg);color:var(--down);border:1px solid #562733}
+.fv .learn{display:block;font-size:.63rem;font-weight:700;color:var(--acc);margin-top:.4rem}
+.stSlider label{color:var(--text-2) !important;font-size:.85rem !important;font-weight:600 !important}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -220,6 +261,7 @@ if not user_agent:
     st.stop()
 
 client = SecClient(user_agent=user_agent)
+prices = PriceClient(api_key=os.environ.get("FINNHUB_API_KEY", ""))
 
 
 @st.cache_data(show_spinner=False)
@@ -235,6 +277,31 @@ def facts(cik: str):
 @st.cache_data(show_spinner=False)
 def profile(cik: str):
     return client.company_profile(cik)
+
+
+@st.cache_data(show_spinner=False, ttl=600)
+def quote(ticker: str):
+    return prices.quote(ticker)
+
+
+@st.cache_data(show_spinner=False, ttl=86_400)
+def fiscal_prices(ticker: str, ends: tuple):
+    return prices.at_fiscal_ends(ticker, list(ends))
+
+
+@st.cache_data(show_spinner=False, ttl=86_400)
+def filings(cik: str):
+    return latest_filings(client, cik, limit=8)
+
+
+@st.cache_data(show_spinner=False, ttl=86_400)
+def prose(cik: str):
+    """Filing text is best-effort: when a section cannot be read, the page
+    simply does not show it rather than showing something wrong."""
+    try:
+        return read_filing(client, cik)
+    except Exception:
+        return None
 
 
 # --------------------------------------------------------------------------
@@ -321,8 +388,15 @@ except Exception as e:
 
 prof = profile(cik)
 latest = eq.latest
-val = value(eq, price=None)          # no price feed wired yet
-card = score(eq, val)
+
+q = quote(ticker)
+ends = tuple((p.label, p.end.isoformat()) for p in eq.years)
+hist_px = fiscal_prices(ticker, ends) if q.available else {}
+pe_hist = [v for _, v in pe_history(eq, hist_px)]
+
+val = value(eq, price=q.price if q.available else None,
+            day_change_pct=q.day_change_pct)
+card = score(eq, val, pe_history=pe_hist or None)
 
 
 # --------------------------------------------------------------------------
@@ -476,19 +550,29 @@ TEACH_TITLES = [
 # Company head + headline strip
 # --------------------------------------------------------------------------
 
-st.markdown(f'<span class="tk">{E(ticker)}</span><h2 class="co">{E(eq.entity)}</h2>'
+eps = latest.get("eps")
+dps = latest.get("dps")
+rev = latest.get("revenue")
+ni = latest.get("net_income")
+margin = None if (ni is None or not rev) else 100 * ni / rev
+
+pe = val.pe
+dy = val.dividend_yield
+
+day = ""
+if q.available and q.day_change_pct is not None:
+    arrow = "▲" if q.day_change_pct >= 0 else "▼"
+    tone = "good" if q.day_change_pct >= 0 else "weak"
+    day = (f'<span class="day {tone}">{arrow} {abs(q.day_change_pct):.2f}% today</span>')
+
+
+st.markdown(f'<span class="tk">{E(ticker)}</span>{day}<h2 class="co">{E(eq.entity)}</h2>'
             f'<p class="one">{E(prof.get("industry") or "")}'
             f'{" · " if prof.get("industry") else ""}CIK {E(cik)} · '
             f'{E(latest.label)} · Form 10-K</p>', unsafe_allow_html=True)
 
 mode = st.radio("View", ["Research", "Teach me"], horizontal=True,
                 label_visibility="collapsed", key="mode")
-
-eps = latest.get("eps")
-dps = latest.get("dps")
-rev = latest.get("revenue")
-ni = latest.get("net_income")
-margin = None if (ni is None or not rev) else 100 * ni / rev
 
 if mode == "Teach me":
     step = st.session_state.get("step", 0)
@@ -519,21 +603,36 @@ if mode == "Teach me":
     st.stop()
 
 strip = [
-    ("Score", f"{card.stars:.1f}/5", card.tone, "see section 08 for why"),
-    ("Share price", "no feed", "dim", "not from filings — add a price source"),
+    ("Score", f"{card.stars:.1f}/5", card.tone, "see section 08 for why", None),
+    ("Share price", f"{D}{q.price:,.2f}" if q.available else "no feed",
+     "" if q.available else "dim",
+     f"as of {q.as_of}" if q.as_of else (q.problem or "price unavailable"), "price"),
     ("EPS", f"{D}{eps:,.2f}" if eps is not None else "—", "",
-     "earnings per share — profit split per share"),
-    ("P/E ratio", "needs price", "dim", "price-to-earnings"),
-    ("Dividend per share", f"{D}{dps:,.2f}" if dps else "none", "",
-     "cash declared per share, per year"),
+     "earnings per share — profit split per share", "eps"),
+    ("P/E ratio", f"{pe:,.2f}×" if pe else ("n/m" if q.available else "needs price"),
+     "" if pe else "dim",
+     "price-to-earnings" + ("" if pe else " — a loss means no P/E" if q.available else ""),
+     "pe"),
+    ("Dividend yield", f"{dy:,.2f}%" if dy else ("none" if dps is None or not dps else "needs price"),
+     "good" if dy and dy > 2 else "" if dy else "dim",
+     "cash paid to you per " + D + "100 held", "div"),
     ("Net margin", f"{margin:,.2f}%" if margin is not None else "—",
      "good" if margin and margin > 15 else "watch" if margin and margin > 7 else "weak",
-     "net profit margin — kept from every " + D + "100 of sales"),
+     "net profit margin — kept from every " + D + "100 of sales", "margin"),
 ]
 st.markdown('<div class="five">' + "".join(
     f'<div class="fv"><span class="k">{E(k)}</span>'
-    f'<span class="v {t}">{v}</span><span class="d">{d}</span></div>'
-    for k, v, t, d in strip) + "</div>", unsafe_allow_html=True)
+    f'<span class="v {t}">{v}</span><span class="d">{E(d)}</span>'
+    + (f'<span class="learn">what does this mean?</span>' if g else "")
+    + "</div>" for k, v, t, d, g in strip) + "</div>", unsafe_allow_html=True)
+
+if any(g for *_, g in strip):
+    cols = st.columns(5)
+    for col, (k, _, _, _, g) in zip(cols, [x for x in strip if x[4]]):
+        if col.button(f"What is {k}?", key=f"gl_{g}", use_container_width=True):
+            st.session_state["mode"] = "Teach me"
+            st.session_state["step"] = 1
+            st.rerun()
 
 # --------------------------------------------------------------------------
 # 01 the numbers
@@ -691,6 +790,149 @@ if len(eps_hist) >= 3 and len(rev_hist) >= 3:
       <p class="cfoot">Both lines start at 100 so they can be compared. Where profit per share
         outpaces revenue the company is keeping more of what it sells; where it lags, costs or
         the share count are growing faster than the business.</p></div>''',
+                unsafe_allow_html=True)
+
+
+# --------------------------------------------------------------------------
+# 05 what management said
+# --------------------------------------------------------------------------
+# Best-effort. Filings vary enormously in structure, so when a section cannot
+# be read the block simply does not appear -- an empty box or a wrong quote
+# would both be worse than silence.
+
+ft = prose(cik)
+
+if ft and ft.mda:
+    sh("05", "What management said", f"{ft.form} filed {ft.filed}")
+    st.markdown('<div class="panel quote">'
+                + "".join(f"<p>“{E(x)}”</p>" for x in ft.mda)
+                + '<span class="src">Quoted verbatim from the filing — not summarised</span>'
+                + "</div>", unsafe_allow_html=True)
+    with st.expander("Why the share price move is not explained here"):
+        st.markdown(
+            "The filing says what was reported and what management blamed for it. It cannot "
+            "say why the price moved on a given day — that is news, rumour, rates and the "
+            "whole market's mood at once.\n\n**A confident-sounding reason is worse than no "
+            "reason**, so this tool does not guess one.")
+
+if ft and ft.risks:
+    sh("06", "What could go wrong", "the company's own list")
+    st.markdown('<div class="panel risk">'
+                + "".join(f'<div class="rr">{E(r)}</div>' for r in ft.risks)
+                + "</div>", unsafe_allow_html=True)
+    st.caption("Taken from the filing's risk factors. A company listing a risk does not mean "
+               "it is happening — filers list everything they can think of, partly for legal "
+               "protection.")
+
+# --------------------------------------------------------------------------
+# 07 peers
+# --------------------------------------------------------------------------
+# Typed by the reader rather than parsed from the filing. Deciding who counts
+# as a peer is a judgement, and a chosen set beats a guessed one.
+
+sh("07", "Compare with peers", "type tickers, comma separated")
+peer_raw = st.text_input("Peers", placeholder="LOW, TGT", label_visibility="collapsed",
+                         key="peers")
+if peer_raw.strip():
+    wanted = [p.strip().upper() for p in peer_raw.split(",") if p.strip()][:4]
+    rows, missed = [], []
+    for tk in wanted:
+        hits = search(tk)
+        if not hits or hits[0]["cik"] == cik:
+            missed.append(tk)
+            continue
+        try:
+            peq = extract_equity(facts(hits[0]["cik"]), cik=hits[0]["cik"])
+            pq = quote(hits[0]["ticker"])
+            pv = value(peq, price=pq.price if pq.available else None)
+            pl = peq.latest
+            pm = (None if pl.get("net_income") is None or not pl.get("revenue")
+                  else 100 * pl["net_income"] / pl["revenue"])
+            rows.append((peq.entity.split(",")[0].title(), pv.pe, pm, pv.dividend_yield,
+                         pq.day_change_pct))
+        except Exception:
+            missed.append(tk)
+
+    if rows:
+        head = ("<tr><th>Company</th><th>P/E</th><th>Net margin</th>"
+                "<th>Div. yield</th><th>Today</th></tr>")
+
+        def cell(v, suffix="", dp=2):
+            return "—" if v is None else f"{v:,.{dp}f}{suffix}"
+
+        def daycell(v):
+            if v is None:
+                return "—"
+            return (f'<span style="color:var(--{"up" if v >= 0 else "down"})">'
+                    f'{"▲" if v >= 0 else "▼"} {abs(v):.2f}%</span>')
+
+        body = (f'<tr class="self"><td>{E(eq.entity.split(",")[0].title())}</td>'
+                f"<td>{cell(pe, '×')}</td><td>{cell(margin, '%')}</td>"
+                f"<td>{cell(dy, '%')}</td><td>{daycell(q.day_change_pct)}</td></tr>")
+        for n, ppe, pmg, pdy, pdc in rows:
+            body += (f"<tr><td>{E(n)}</td><td>{cell(ppe, '×')}</td>"
+                     f"<td>{cell(pmg, '%')}</td><td>{cell(pdy, '%')}</td>"
+                     f"<td>{daycell(pdc)}</td></tr>")
+        st.markdown(f'<div class="panel"><table class="comp"><thead>{head}</thead>'
+                    f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
+        st.caption("Peers you chose. Comparing against a company's own competitors is more "
+                   "honest than a fixed threshold, because what counts as a normal multiple "
+                   "differs completely between industries.")
+    if missed:
+        st.caption("Could not use: " + ", ".join(missed))
+
+# --------------------------------------------------------------------------
+# 09 what would have to happen
+# --------------------------------------------------------------------------
+# Two sliders, because a return has two engines and either can undo the other.
+# Explicitly not a forecast: the point is to show how much the answer moves
+# when assumptions nobody knows are changed.
+
+if eps and eps > 0:
+    sh("09", "What would have to happen", "move the sliders")
+    start_pe = float(round(pe)) if pe else 20.0
+    c1, c2 = st.columns(2)
+    g = c1.slider("EPS growth a year", -10.0, 25.0, 5.0, 0.5, format="%.1f%%")
+    m = c2.slider("P/E ratio", 5.0, 70.0, min(max(start_pe, 5.0), 70.0), 1.0, format="%.0f×")
+
+    eps5 = eps * (1 + g / 100) ** 5
+    price5 = eps5 * m
+    divs = (dps or 0) * 5
+    base = q.price if q.available else (eps * start_pe)
+    ret = ((price5 + divs) / base) ** (1 / 5) - 1 if base > 0 else None
+
+    if ret is not None:
+        tone = "up" if ret >= 0 else "down"
+        st.markdown(
+            f'<div class="panel"><span class="big {tone}">{ret * 100:,.1f}%</span>'
+            f'<p class="bigsub">a year for five years. <b>{D}1,000</b> would become '
+            f'<b>{D}{1000 * (1 + ret) ** 5:,.0f}</b>, with EPS at '
+            f'<b>{D}{eps5:,.2f}</b> and the share at <b>{D}{price5:,.0f}</b>.</p>'
+            + ("" if q.available else
+               '<p class="cfoot">No live price, so this starts from the current EPS at '
+               f"{start_pe:.0f}× rather than the market price.</p>")
+            + "</div>", unsafe_allow_html=True)
+    st.caption("Not a prediction. Set growth to 10% then drag the P/E down to 15× — profits "
+               "double and you still lose money, because what people will pay fell.")
+
+# --------------------------------------------------------------------------
+# 10 filings
+# --------------------------------------------------------------------------
+
+fl = filings(cik)
+if fl:
+    sh("10", "Recent filings", "newest first")
+    kinds = {"10-K": ("k", "Annual report"), "10-Q": ("q", "Quarterly report"),
+             "8-K": ("e", "Current report")}
+    items = ""
+    for f in fl:
+        cls, what = kinds.get(f["form"][:4], ("o", "Filing"))
+        desc = f.get("desc") or what
+        items += (f'<li><span class="ftype {cls}">{E(f["form"])}</span>'
+                  f'<span class="fmain"><a href="{E(f["url"])}" target="_blank" '
+                  f'rel="noopener">{E(desc)}</a></span>'
+                  f'<span class="fwhen">{E(f["filed"])}</span></li>')
+    st.markdown(f'<div class="panel"><ul class="feed">{items}</ul></div>',
                 unsafe_allow_html=True)
 
 # --------------------------------------------------------------------------
