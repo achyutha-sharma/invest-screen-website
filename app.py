@@ -53,7 +53,15 @@ st.markdown("""
   background-attachment:fixed}
 html,body,[class*="css"],.stApp,p,span,div,label{
   font-family:'Archivo',system-ui,-apple-system,sans-serif; color:var(--text)}
-.block-container{max-width:880px;padding-top:2.4rem;padding-bottom:4rem}
+.block-container{max-width:880px;padding-top:4.5rem;padding-bottom:4rem}
+@media (max-width:640px){.block-container{padding-top:3.6rem}}
+
+/* Streamlit chrome: the toolbar overlaps content and the rest is noise. */
+header[data-testid="stHeader"]{background:transparent;height:0}
+div[data-testid="stDecoration"]{display:none}
+div[data-testid="stToolbar"]{right:.5rem}
+#MainMenu{visibility:hidden}
+footer{visibility:hidden}
 h1,h2,h3,h4{color:var(--text);letter-spacing:-.02em}
 
 /* masthead */
