@@ -15,6 +15,7 @@ bad buy.
 
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 
 
@@ -24,6 +25,22 @@ class Question:
     options: list[str]
     correct: int
     why: str
+
+    def shuffled(self, rng: random.Random) -> "Question":
+        """Same question, options in a new order.
+
+        Written with the right answer first for readability, which would make
+        every answer A. Shuffling per round means a reader cannot pattern-match
+        the position instead of the reasoning.
+        """
+        pairs = list(enumerate(self.options))
+        rng.shuffle(pairs)
+        return Question(
+            prompt=self.prompt,
+            options=[o for _, o in pairs],
+            correct=next(i for i, (orig, _) in enumerate(pairs) if orig == self.correct),
+            why=self.why,
+        )
 
 
 def build(name: str, eps=None, pe=None, margin=None, price=None, shares=None,
@@ -197,6 +214,18 @@ def build(name: str, eps=None, pe=None, margin=None, price=None, shares=None,
     ))
 
     return qs
+
+
+def pick(pool: list[Question], round_no: int = 0, count: int = 5) -> list[Question]:
+    """A different five each round, with the options reordered.
+
+    Seeded on the round rather than left to chance, so a rerun of the same
+    round shows the same questions -- Streamlit re-executes the script on every
+    interaction, and a fresh sample each time would shuffle mid-answer.
+    """
+    rng = random.Random(round_no * 7919 + len(pool))
+    chosen = rng.sample(pool, min(count, len(pool)))
+    return [q.shuffled(rng) for q in chosen]
 
 
 def grade(score: int, total: int) -> tuple[str, str]:
