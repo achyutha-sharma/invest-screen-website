@@ -438,6 +438,43 @@ def test_filing_text():
     print("filing text ok")
 
 
+
+
+def test_risk_junk_rejected():
+    """Financial-statement rows must never be mistaken for risk headings.
+
+    A real filing put Item 7A tables through the earlier version of this
+    parser and got back balance-sheet rows, so each of those shapes is now a
+    test case.
+    """
+    from filing_text import extract_risks, to_text
+
+    junk = to_text("<html><body><p>Item 1A. Risk Factors</p>" + "".join(
+        f"<p>{row}</p>" for row in [
+            "MAY 31, 2026 MAY 31, 2025",
+            "Balance at May 31, 2023 305 $ — 1,227 $ 3 $ 12,412 $ 231 $ 1,358 $ 14,004",
+            "EXPECTED MATURITY DATE YEAR ENDING MAY 31",
+            "ITEM 7A. QUANTITATIVE AND QUALITATIVE DISCLOSURES ABOUT MARKET RISK",
+            "Our material cash requirements as of May 31, 2026, were as follows",
+            "Table of Contents",
+            "12,412",
+        ]) + "<p>A shift in consumer preferences could reduce demand for our products</p>"
+        + "<p>We rely on a small number of contract manufacturers</p>"
+        + "<p>Item 1B. Unresolved Staff Comments</p>" + "x" * 500 + "</body></html>")
+
+    risks, why = extract_risks(junk)
+    for r in risks:
+        assert "MAY 31" not in r.upper(), r
+        assert "BALANCE AT" not in r.upper(), r
+        assert "MATURITY" not in r.upper(), r
+        assert not r.upper().startswith("ITEM"), r
+        assert sum(c.isdigit() for c in r) <= 3, r
+        assert r != r.upper(), r
+    assert any("consumer preferences" in r for r in risks), risks
+    assert any("contract manufacturers" in r for r in risks), risks
+    print("risk junk rejected ok")
+
+
 def main():
     test_clean()
     test_valuation()
@@ -447,6 +484,7 @@ def main():
     test_scorecard()
     test_prices()
     test_filing_text()
+    test_risk_junk_rejected()
     print("\nAll checks passed.")
 
 
