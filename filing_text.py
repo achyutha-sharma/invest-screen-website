@@ -103,18 +103,23 @@ def _item_span(text: str, start_pat: str, end_pat: str) -> str | None:
     starts = [m.start() for m in re.finditer(start_pat, text, re.I)]
     if not starts:
         return None
-    # Try each candidate from the last backwards: the table of contents match
-    # comes first, the real section later, and any cross-reference later still.
-    for s in reversed(starts):
-        after = text[s:]
-        # Search for the end *within* the text after this start. Looking at the
-        # whole document would pair a late start with an early contents-page
-        # end and produce an empty span.
+
+    # Every candidate is scored, rather than taking the first or last. A real
+    # section is closed by its terminator; the table of contents entry is a
+    # line long; a cross-reference in the notes has no terminator at all. So
+    # the answer is the longest properly-closed span.
+    closed, open_ended = [], []
+    for start in starts:
+        after = text[start:]
         e = re.search(end_pat, after, re.I)
-        span = after[: e.start()] if e and e.start() > 400 else after[:120_000]
-        if len(span) > 400:
-            return span
-    return None
+        if e and e.start() > 400:
+            closed.append(after[: e.start()])
+        elif len(after) > 400:
+            open_ended.append(after[:120_000])
+
+    if closed:
+        return max(closed, key=len)
+    return open_ended[0] if open_ended else None
 
 
 # --------------------------------------------------------------------------
