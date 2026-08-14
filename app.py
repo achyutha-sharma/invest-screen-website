@@ -441,6 +441,22 @@ div[data-testid="stVerticalBlock"]:has(.hitrow) .stButton button:hover{
 div[data-testid="stVerticalBlock"]:has(.hitrow) .stButton button p{
   text-align:left !important;width:100%;font-family:var(--mono);font-size:.86rem}
 
+
+/* the masthead is a button styled as a wordmark */
+div[data-testid="stVerticalBlock"]:has(.masthome) > div:first-of-type + div .stButton button,
+.masthome ~ div .stButton button{
+  background:none !important;border:0 !important;padding:0 !important;
+  font-family:'Archivo',sans-serif !important;font-size:1.18rem !important;
+  font-weight:700 !important;color:var(--text) !important;letter-spacing:-.02em;
+  width:auto !important;min-height:auto !important;height:auto !important;
+  box-shadow:none !important}
+.masthome ~ div .stButton button:hover{color:var(--acc) !important}
+.masthome ~ div .stButton button p{font-size:1.18rem !important;font-weight:700 !important}
+.mastline{border-bottom:1px solid var(--line);margin:.2rem 0 1.4rem}
+div[data-testid="stColumn"]:has(.logo){flex:0 0 auto !important;width:auto !important;
+  min-width:44px !important}
+.masthome ~ div [data-testid="stColumn"] .stButton button{margin-top:.15rem}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -458,9 +474,17 @@ div[data-testid="stExpander"] summary{color:var(--text) !important}
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<div class="mast"><span class="logo">VS</span>'
-            '<span class="mark">Value<span>Screen</span></span></div>',
-            unsafe_allow_html=True)
+st.markdown('<span class="masthome"></span>', unsafe_allow_html=True)
+badge, word = st.columns([1, 9])
+badge.markdown('<span class="logo">VS</span>', unsafe_allow_html=True)
+if word.button("ValueScreen", key="home_logo"):
+    for k in ("cik", "ticker", "name", "fund", "step", "searched",
+              "quiz", "quiz_round", "mode", "peer_edit"):
+        st.session_state.pop(k, None)
+    for k in [k for k in st.session_state if k.startswith(("quiz_", "gl_", "hit_"))]:
+        st.session_state.pop(k, None)
+    st.rerun()
+st.markdown('<div class="mastline"></div>', unsafe_allow_html=True)
 
 def secret(name: str, default: str = "") -> str:
     """Read a secret from either source.
@@ -1254,8 +1278,9 @@ def arrow(vals, better):
 have = [x for x in LINES if x[1]]
 if have:
     labels = [lab for lab, _ in max((x[1] for x in have), key=len)]
-    head = "<tr><th>Measure</th>" + "".join(f"<th>{E(l)}</th>" for l in labels) \
-        + "<th>3-yr</th></tr>"
+    span = len(labels) - 1
+    head = ("<tr><th>Measure</th>" + "".join(f"<th>{E(l)}</th>" for l in labels)
+            + f"<th>{span}-yr</th></tr>")
     body = ""
     for name, vals, fmt, better, hint in have:
         got = dict(vals)
@@ -1267,8 +1292,9 @@ if have:
                  f'{cells}<td class="tcol">{arrow(vals, better)}</td></tr>')
     st.markdown(f'<div class="panel"><table class="years"><thead>{head}</thead>'
                 f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
-    st.caption("Green is the direction you would rather see — for debt that means falling. "
-               "The last column compares the newest year with the oldest shown.")
+    st.caption(f"Green is the direction you would rather see — for debt that means falling. "
+               f"The last column is the change from {E(labels[0])} to {E(labels[-1])}, "
+               f"which is {span} year{'s' if span != 1 else ''} of growth.")
 
 # --------------------------------------------------------------------------
 # Trend chart
