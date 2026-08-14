@@ -172,6 +172,14 @@ def extract_risks(text: str, limit: int = 6) -> tuple[list[str], str]:
     if span is None:
         return [], "The risk factors section could not be located in this filing."
 
+    # Item 1A sits early in a 10-K. If the span we found is deep into the
+    # document it is a cross-reference from the financial statements, not the
+    # section itself, and its contents would be table rows.
+    where = text.find(span[:80])
+    if where > 0 and where / max(len(text), 1) > 0.55:
+        return [], ("The risk factors heading was found only in a later cross-reference, "
+                    "not as a section we could read.")
+
     out, seen = [], set()
     for raw in span.split("\n"):
         s = " ".join(raw.split())
@@ -188,7 +196,19 @@ def extract_risks(text: str, limit: int = 6) -> tuple[list[str], str]:
         if not re.search(r"\b(may|could|might|risk|depend|fail|adverse|affect|if we|"
                          r"our abilit|we (are|do|rely|face))", s, re.I):
             continue
-        if re.search(r"table of contents|item\s*1a|^\d+$", s, re.I):
+        # Financial-statement rows and headings survive the tests above, so
+        # rule them out directly: real risk headings are prose, not figures,
+        # and do not shout in capitals or name a balance-sheet date.
+        if re.search(r"table of contents|^item\s|^\d|^\W", s, re.I):
+            continue
+        if sum(c.isdigit() for c in s) > 3:
+            continue
+        if s.upper() == s:
+            continue
+        if re.search(r"\b(20\d\d|balance at|maturity|as of \w+ \d)", s, re.I):
+            continue
+        # A heading is a claim with a verb, not a table label.
+        if len(s.split()) < 5:
             continue
         key = s.lower()[:60]
         if key in seen:
@@ -337,4 +357,3 @@ def read_filing(client, cik: str, form_prefix: str = "10-K") -> FilingText:
         ft.problems.append(why)
 
     return ft
-  
