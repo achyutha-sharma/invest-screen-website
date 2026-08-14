@@ -103,6 +103,8 @@ def _item_span(text: str, start_pat: str, end_pat: str) -> str | None:
     starts = [m.start() for m in re.finditer(start_pat, text, re.I)]
     if not starts:
         return None
+    # Try each candidate from the last backwards: the table of contents match
+    # comes first, the real section later, and any cross-reference later still.
     for s in reversed(starts):
         after = text[s:]
         # Search for the end *within* the text after this start. Looking at the
@@ -172,13 +174,13 @@ def extract_risks(text: str, limit: int = 6) -> tuple[list[str], str]:
     if span is None:
         return [], "The risk factors section could not be located in this filing."
 
-    # Item 1A sits early in a 10-K. If the span we found is deep into the
-    # document it is a cross-reference from the financial statements, not the
-    # section itself, and its contents would be table rows.
-    where = text.find(span[:80])
-    if where > 0 and where / max(len(text), 1) > 0.55:
-        return [], ("The risk factors heading was found only in a later cross-reference, "
-                    "not as a section we could read.")
+    # A real Item 1A is closed by Item 1B or Item 2. _item_span cuts there, so
+    # a span that ran to the length cap instead was never a section at all --
+    # it is a cross-reference from the financial statements, and everything
+    # "inside" it is whatever tables happened to follow.
+    if len(span) >= 119_000:
+        return [], ("The risk factors heading appears only as a cross-reference in this "
+                    "filing, not as a readable section.")
 
     out, seen = [], set()
     for raw in span.split("\n"):
