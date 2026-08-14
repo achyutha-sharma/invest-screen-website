@@ -219,13 +219,6 @@ def test_guards():
     print("guards ok")
 
 
-if __name__ == "__main__":
-    test_clean()
-    test_valuation()
-    test_derivation()
-    test_quarters()
-    test_guards()
-    print("\nAll equity checks passed.")
 
 
 # ---------------------------------------------------------------------------
@@ -306,3 +299,156 @@ def test_scorecard():
     for card_ in (card, wcard, npc, lcard):
         assert 0 <= card_.stars <= 5 and (card_.stars * 2) % 1 == 0, card_.stars
     print("scorecard ok")
+
+
+# ---------------------------------------------------------------------------
+# Prices: the one source outside SEC. Must never raise.
+# ---------------------------------------------------------------------------
+def test_prices():
+    import pathlib, tempfile
+    from prices import PriceClient, Quote
+
+    tmp = pathlib.Path(tempfile.mkdtemp())
+
+    class Offline(PriceClient):
+        """Every network call fails, as it would in an outage."""
+        def _get(self, url):
+            return None
+
+    c = Offline(cache_dir=tmp)
+    q = c.quote("NKE")
+    assert isinstance(q, Quote) and not q.available
+    assert q.day_change_pct is None
+    assert c.monthly("NKE") == []
+    assert c.at_fiscal_ends("NKE", [("FY2026", "2026-05-31")]) == {}
+
+    # A quote with no previous close reports no day move rather than zero.
+    assert Quote(price=62.0).day_change_pct is None
+    assert Quote(price=62.0, prev_close=0).day_change_pct is None
+    assert round(Quote(price=62.0, prev_close=64.0).day_change_pct, 2) == -3.12
+
+    # Parsing a well-formed CSV response.
+    class Fake(PriceClient):
+        def _get(self, url):
+            if "q/l" in url:
+                return ("Symbol,Date,Open,High,Low,Close,Volume\n"
+                        "NKE.US,2026-08-12,63.10,63.90,61.80,62.00,8123456\n")
+            return ("Date,Open,High,Low,Close,Volume\n"
+                    "2025-05-30,70.10,71.00,69.20,70.50,100\n"
+                    "2026-05-29,64.00,64.80,63.10,63.40,100\n"
+                    "2026-07-31,63.00,63.50,61.90,62.40,100\n")
+
+    f = Fake(cache_dir=pathlib.Path(tempfile.mkdtemp()))
+    fq = f.quote("NKE")
+    assert fq.available and fq.price == 62.00
+    assert fq.as_of == "2026-08-12"
+    assert "Stooq" in fq.source
+    assert fq.day_change_pct is not None
+
+    hist = f.monthly("NKE")
+    assert len(hist) == 3 and hist[0] == ("2025-05-30", 70.50)
+
+    # Fiscal-year prices: within 45 days matches, far-off years are dropped.
+    got = f.at_fiscal_ends("NKE", [("FY2026", "2026-05-31"), ("FY2020", "2020-05-31")])
+    assert got == {"FY2026": 63.40}, got
+    print("prices ok")
+
+
+
+
+# ---------------------------------------------------------------------------
+# Filing prose: MD&A, risk factors, competitors
+# ---------------------------------------------------------------------------
+FAKE_10K = """
+<html><body>
+<table><tr><td>Item 1. Business</td><td>3</td></tr>
+<tr><td>Item 1A. Risk Factors</td><td>12</td></tr>
+<tr><td>Item 7. Management's Discussion and Analysis</td><td>28</td></tr></table>
+
+<p>Item 1. Business</p>
+<p>We design and sell athletic footwear and apparel worldwide through our own
+stores, digital platforms and wholesale partners.</p>
+<p>Competition</p>
+<p>The athletic footwear industry is highly competitive. We compete with
+Adidas AG, Under Armour Inc. and Skechers USA Inc. on product design, price and
+brand strength, as well as with a range of smaller regional brands.</p>
+
+<p>Item 1A. Risk Factors</p>
+<p>Our business is affected by consumer discretionary spending</p>
+<p>A decline in consumer confidence may reduce demand for our products and
+adversely affect results of operations in any period.</p>
+<p>Excess inventory could require additional markdowns</p>
+<p>If we misjudge demand we may hold inventory that can only be sold at a
+discount, which would reduce gross margin.</p>
+<p>We depend on a limited number of manufacturing partners</p>
+<p>Item 1B. Unresolved Staff Comments</p>
+<p>None.</p>
+
+<p>Item 7. Management's Discussion and Analysis of Financial Condition</p>
+<p>Revenue decreased 4% in the period, primarily due to lower unit sales in
+Greater China and higher promotional activity across our wholesale channel.</p>
+<p>Gross margin declined 290 basis points, driven primarily by increased
+markdowns on excess inventory and unfavourable foreign currency movements.</p>
+<p>These decreases were partially offset by growth in our direct-to-consumer
+channel, which increased 6% over the prior year.</p>
+<p>See Note 14 for further detail on segment results.</p>
+<p>Item 7A. Quantitative and Qualitative Disclosures About Market Risk</p>
+<p>We are exposed to interest rate risk.</p>
+</body></html>
+"""
+
+
+def test_filing_text():
+    from filing_text import extract_competitors, extract_mda, extract_risks, to_text
+
+    text = to_text(FAKE_10K)
+    assert "Item 7" in text and "<p>" not in text
+
+    mda, why = extract_mda(text)
+    assert not why and len(mda) >= 2, (why, mda)
+    assert any("Greater China" in s for s in mda), mda
+    assert any("partially offset" in s for s in mda), mda
+    # A cross-reference is not an explanation and must be dropped.
+    assert not any(s.startswith("See Note") for s in mda), mda
+    # Everything is verbatim: each sentence appears in the source.
+    flat = " ".join(text.split())
+    for s in mda:
+        assert s in flat, s
+
+    risks, why = extract_risks(text)
+    assert not why and len(risks) >= 2, (why, risks)
+    assert any("discretionary spending" in r for r in risks), risks
+    # Headings only -- the explanatory paragraphs end in a full stop.
+    for r in risks:
+        assert not r.endswith("."), r
+
+    peers, note, why = extract_competitors(text)
+    assert not why, why
+    assert "Adidas AG" in peers and "Under Armour Inc" in peers, peers
+    assert not any(p.lower().startswith("the ") for p in peers), peers
+    assert "competitive" in note.lower(), note
+
+    # A filing with none of these sections must say so, not guess.
+    empty = to_text("<html><body><p>" + "Nothing useful here. " * 200 + "</p></body></html>")
+    m, w1 = extract_mda(empty)
+    r, w2 = extract_risks(empty)
+    c, note2, w3 = extract_competitors(empty)
+    assert m == [] and r == [] and c == []
+    assert all(w and "could not be located" in w or "does not" in w for w in (w1, w2, w3))
+    print("filing text ok")
+
+
+def main():
+    test_clean()
+    test_valuation()
+    test_derivation()
+    test_quarters()
+    test_guards()
+    test_scorecard()
+    test_prices()
+    test_filing_text()
+    print("\nAll checks passed.")
+
+
+if __name__ == "__main__":
+    main()
