@@ -442,14 +442,30 @@ st.markdown('<div class="mast"><span class="logo">VS</span>'
             '<span class="mark">Value<span>Screen</span></span></div>',
             unsafe_allow_html=True)
 
-user_agent = os.environ.get("SEC_USER_AGENT")
+def secret(name: str, default: str = "") -> str:
+    """Read a secret from either source.
+
+    Streamlit Cloud supplies these through st.secrets; running locally they are
+    environment variables. Checking both means the same file works in both
+    places with nothing to remember.
+    """
+    try:
+        if name in st.secrets:
+            return str(st.secrets[name])
+    except Exception:
+        pass
+    return os.environ.get(name, default)
+
+
+user_agent = secret("SEC_USER_AGENT")
 if not user_agent:
-    st.error("Set SEC_USER_AGENT to your name and email. The SEC turns away "
-             "requests that do not identify the caller.")
+    st.error("Set SEC_USER_AGENT to a name and email — the SEC turns away requests that "
+             "do not identify the caller. Locally that is an environment variable; on "
+             "Streamlit Cloud it goes in the app's secrets.")
     st.stop()
 
 client = SecClient(user_agent=user_agent)
-prices = PriceClient(api_key=os.environ.get("FINNHUB_API_KEY", ""))
+prices = PriceClient(api_key=secret("FINNHUB_API_KEY"))
 
 
 @st.cache_data(show_spinner=False)
