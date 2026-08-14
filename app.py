@@ -16,6 +16,7 @@ import streamlit as st
 from filing_text import latest_filings, read_filing
 from peers import suggest
 from prices import PriceClient
+from quiz import build as quiz_build, grade as quiz_grade
 from scorecard import score
 from sec_equity import extract_equity, pe_history, value
 from sec_ratios import SecClient
@@ -289,6 +290,35 @@ div[data-testid="stHorizontalBlock"]:has(button[kind]) .stButton button:hover{
   background:var(--surf-2);color:var(--acc-2)}
 div[data-testid="stHorizontalBlock"]{gap:1px !important}
 
+
+.comp td:first-child{font-weight:700;font-size:.95rem}
+.comp .mini{font-family:var(--mono);font-size:.72rem;font-weight:700;margin-left:.5rem}
+.comp .mini.up{color:var(--up)} .comp .mini.down{color:var(--down)}
+.comp tr.self td:first-child{color:var(--acc)}
+.comp tbody tr:hover td{background:rgba(169,139,255,.05)}
+.comp td{padding:.75rem .9rem}
+.comp th{padding:.65rem .9rem}
+
+
+/* quiz */
+.qq{margin:1.3rem 0 .5rem}
+.qq .qn{font-family:var(--mono);font-size:.62rem;font-weight:700;letter-spacing:.12em;
+  color:var(--acc);text-transform:uppercase}
+.qq p{margin:.3rem 0 0;font-size:1rem;color:var(--text);max-width:60ch;line-height:1.55}
+.qa{border-radius:8px;padding:.85rem 1rem;margin:.5rem 0 .3rem;font-size:.88rem;
+  line-height:1.62;max-width:66ch}
+.qa.right{background:rgba(95,214,155,.09);border:1px solid #22502F;color:var(--text-2)}
+.qa.right b{color:var(--up)}
+.qa.wrong{background:rgba(240,196,106,.08);border:1px solid #4E3E1E;color:var(--text-2)}
+.qa.wrong b{color:var(--warn)}
+.qa b{font-weight:700}
+.qscore{background:rgba(169,139,255,.08);border:1px solid var(--acc-dim);border-radius:10px;
+  padding:1.2rem 1.3rem;margin-top:1.4rem}
+.qscore .big{font-size:2.6rem}
+.qscore .big.warn{color:var(--warn)}
+.qscore .bigsub{margin:.3rem 0 0}
+.qscore .bigsub b{color:#FFFFFF}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -513,6 +543,13 @@ def teach_slide(i, eq, latest, card, val=None, quote_=None, px_hist=None):
                 parts.append(("Making the product", rev - gross, "var(--c5)"))
                 if ebit is not None:
                     parts.append(("Running the company", gross - ebit, "var(--c3)"))
+                else:
+                    # Operating income was not tagged, so the remainder cannot
+                    # be split further. Naming it keeps the bar adding to 100
+                    # instead of leaving an unexplained gap.
+                    parts.append(("Everything else", gross, "var(--c4)"))
+            elif ebit is not None:
+                parts.append(("All costs", rev - ebit, "var(--c5)"))
             if ebit is not None:
                 parts.append(("Operating profit", ebit, "var(--up)"))
             st.markdown('<p class="picker">Where every ' + D + '100 of sales goes</p>'
@@ -525,7 +562,8 @@ def teach_slide(i, eq, latest, card, val=None, quote_=None, px_hist=None):
                         + "</div>", unsafe_allow_html=True)
 
         cap = val.market_cap if val and val.market_cap else None
-        with st.expander(f"Market cap  ·  {money(cap, html=False) if cap else 'needs price'}"):
+        cap_label = money(cap, html=False).replace("$", "\\$") if cap else "needs price"
+        with st.expander(f"Market cap  ·  {cap_label}"):
             st.markdown(
                 "Share price × number of shares — what the whole company costs at today's "
                 "price.\n\n**This is what tells you how big something is, not the share "
@@ -589,10 +627,12 @@ def teach_slide(i, eq, latest, card, val=None, quote_=None, px_hist=None):
                 + "\n\nMargin is the *quality* of sales; revenue is only the quantity. "
                 "A rising revenue line with a falling margin usually means growth is being "
                 "bought with discounts.")
-        with st.expander(f"Free cash flow  ·  {money(fcf, html=False)}"):
+        with st.expander("Free cash flow  ·  "
+                         + money(fcf, html=False).replace("$", "\\$")):
             st.markdown(
-                (f"Reported profit was {money(ni, html=False)}. Real spare cash was "
-                 f"**{money(fcf, html=False)}**.\n\n" if ni and fcf is not None else "")
+                (f"Reported profit was {money(ni, html=False).replace('$', chr(92) + '$')}. "
+                 f"Real spare cash was **{money(fcf, html=False).replace('$', chr(92) + '$')}**."
+                 "\n\n" if ni and fcf is not None else "")
                 + "**Profit is an opinion. Cash is a fact.** Profit involves judgement about "
                 "when to count things. Cash either arrived or it did not.")
 
@@ -910,66 +950,64 @@ if eq.quarters:
                 unsafe_allow_html=True)
 
 # --------------------------------------------------------------------------
-# 04 ten years
+# 04 now it is your turn
 # --------------------------------------------------------------------------
+# Questions built from this company's own figures, so the reader is checking
+# understanding of something they have just looked at rather than recalling a
+# definition in the abstract.
 
-eps_hist = eq.series("eps")
-rev_hist = eq.series("revenue")
-if len(eps_hist) >= 3 and len(rev_hist) >= 3:
-    sh("04", "Ten years", "both starting at 100")
-    W, H, L, R, T, B = 780, 200, 34, 10, 12, 24
+sh("04", "Now it's your turn", "questions from this company's numbers")
 
-    def idx(series):
-        base = series[0][1]
-        return [100 * v / base for _, v in series] if base else []
+qs = quiz_build(
+    eq.entity.split(",")[0].title(),
+    eps=eps, pe=pe, margin=margin,
+    price=q.price if q.available else None,
+    shares=latest.get("shares"),
+    fcf=(None if latest.get("ocf") is None or latest.get("capex") is None
+         else latest.get("ocf") - latest.get("capex")),
+    net_income=ni, dividend_yield=dy,
+    revenue_growth=None, income_growth=None,
+)
 
-    ri, ei = idx(rev_hist), idx(eps_hist)
-    allv = ri + ei
-    lo, hi = min(allv + [100]), max(allv)
-    pad = (hi - lo) * .08 or 10
-    y0, y1 = lo - pad, hi + pad
-    n = max(len(ri), len(ei)) - 1
+if qs:
+    answers = st.session_state.setdefault("quiz", {})
+    for n, question in enumerate(qs):
+        key = f"q{n}"
+        st.markdown(f'<div class="qq"><span class="qn">Question {n + 1}</span>'
+                    f'<p>{E(question.prompt).replace("$", D)}</p></div>',
+                    unsafe_allow_html=True)
+        picked = st.radio(question.prompt, question.options, index=None,
+                          key=f"quiz_{key}", label_visibility="collapsed")
+        if picked is not None:
+            chose = question.options.index(picked)
+            answers[key] = chose == question.correct
+            if chose == question.correct:
+                st.markdown('<div class="qa right"><b>Correct.</b> '
+                            + question.why.replace("$", D) + "</div>",
+                            unsafe_allow_html=True)
+            else:
+                st.markdown(
+                    '<div class="qa wrong"><b>Not quite.</b> The answer is “'
+                    + E(question.options[question.correct]).replace("$", D)
+                    + "”. " + question.why.replace("$", D) + "</div>",
+                    unsafe_allow_html=True)
 
-    def X(i, count):
-        return L + (i / max(count - 1, 1)) * (W - L - R)
-
-    def Y(v):
-        return T + (1 - (v - y0) / (y1 - y0)) * (H - T - B)
-
-    def path(a):
-        return " ".join(f"{'L' if i else 'M'}{X(i, len(a)):.1f},{Y(v):.1f}"
-                        for i, v in enumerate(a))
-
-    grid = ""
-    for g in range(4):
-        v = y0 + (y1 - y0) * g / 3
-        y = Y(v)
-        grid += (f'<line x1="{L}" y1="{y:.1f}" x2="{W - R}" y2="{y:.1f}" stroke="#332B60"/>'
-                 f'<text x="{L - 6}" y="{y + 3.5:.1f}" text-anchor="end" '
-                 'font-family="IBM Plex Mono,monospace" font-size="9" font-weight="600" '
-                 f'fill="#7F779E">{v:.0f}</text>')
-    labels = ""
-    for i, (lab, _) in enumerate(eps_hist):
-        if i % max(len(eps_hist) // 4, 1) == 0 or i == len(eps_hist) - 1:
-            labels += (f'<text x="{X(i, len(eps_hist)):.1f}" y="{H - 7}" text-anchor="middle" '
-                       'font-family="IBM Plex Mono,monospace" font-size="9" font-weight="600" '
-                       f'fill="#7F779E">&#39;{E(lab[-2:])}</text>')
-
-    st.markdown(f'''<div class="panel chart">
-      <div class="ckey"><span><i class="ln" style="background:#A98BFF"></i>revenue</span>
-      <span><i class="ln" style="background:#7F779E"></i>profit per share</span></div>
-      <svg viewBox="0 0 {W} {H}" role="img" aria-label="Revenue and profit per share, indexed to 100">
-        {grid}
-        <path d="{path(ei)}" fill="none" stroke="#7F779E" stroke-width="1.9" stroke-dasharray="5 4"/>
-        <path d="{path(ri)}" fill="none" stroke="#A98BFF" stroke-width="2.6"
-          stroke-linejoin="round" stroke-linecap="round"/>
-        {labels}
-      </svg>
-      <p class="cfoot">Both lines start at 100 so they can be compared. Where profit per share
-        outpaces revenue the company is keeping more of what it sells; where it lags, costs or
-        the share count are growing faster than the business.</p></div>''',
-                unsafe_allow_html=True)
-
+    done = [v for k, v in answers.items() if k in {f"q{i}" for i in range(len(qs))}]
+    if len(done) == len(qs):
+        got = sum(done)
+        verdict, note = quiz_grade(got, len(qs))
+        tone = "up" if got / len(qs) >= 0.8 else "warn" if got / len(qs) >= 0.5 else "down"
+        st.markdown(f'<div class="qscore"><span class="big {tone}">{got}/{len(qs)}</span>'
+                    f'<p class="bigsub"><b>{E(verdict)}.</b> {E(note)}</p></div>',
+                    unsafe_allow_html=True)
+        if st.button("Try again", key="quiz_reset"):
+            for i in range(len(qs)):
+                st.session_state.pop(f"quiz_q{i}", None)
+            st.session_state["quiz"] = {}
+            st.rerun()
+    else:
+        st.caption(f"{len(done)} of {len(qs)} answered. Nothing here is scored against you — "
+                   "the explanations are the point.")
 
 # --------------------------------------------------------------------------
 # 05 what management said
@@ -1040,20 +1078,23 @@ if rows:
         return "—" if v is None else f"{v:,.{dp}f}{suffix}"
 
     def daycell(v):
+        """The day move sits beside the name, small, so the ratios stay the
+        focus -- it is context, not one of the things being compared."""
         if v is None:
-            return "—"
-        return (f'<span style="color:var(--{"up" if v >= 0 else "down"})">'
-                f'{"▲" if v >= 0 else "▼"} {abs(v):.2f}%</span>')
+            return ""
+        return (f'<span class="mini {"up" if v >= 0 else "down"}">'
+                f'{"▲" if v >= 0 else "▼"}{abs(v):.2f}%</span>')
 
     head = ("<tr><th>Company</th><th>P/E</th><th>Net margin</th>"
-            "<th>Div. yield</th><th>Today</th></tr>")
-    body = (f'<tr class="self"><td>{E(eq.entity.split(",")[0].title())}</td>'
+            "<th>Div. yield</th></tr>")
+    body = (f'<tr class="self"><td>{E(eq.entity.split(",")[0].title())}'
+            f'{daycell(q.day_change_pct)}</td>'
             f"<td>{cell(pe, '×')}</td><td>{cell(margin, '%')}</td>"
-            f"<td>{cell(dy, '%')}</td><td>{daycell(q.day_change_pct)}</td></tr>")
+            f"<td>{cell(dy, '%')}</td></tr>")
     for r in rows:
-        body += (f'<tr><td>{E(r["name"])}</td><td>{cell(r["pe"], "×")}</td>'
-                 f'<td>{cell(r["margin"], "%")}</td><td>{cell(r["dy"], "%")}</td>'
-                 f'<td>{daycell(r["day"])}</td></tr>')
+        body += (f'<tr><td>{E(r["name"])}{daycell(r["day"])}</td>'
+                 f'<td>{cell(r["pe"], "×")}</td>'
+                 f'<td>{cell(r["margin"], "%")}</td><td>{cell(r["dy"], "%")}</td></tr>')
     st.markdown(f'<div class="panel"><table class="comp"><thead>{head}</thead>'
                 f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
 
