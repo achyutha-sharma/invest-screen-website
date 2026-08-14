@@ -679,6 +679,78 @@ def teach_slide(i, eq, latest, card, val=None, quote_=None, px_hist=None):
                     "<b>One number never tells the whole story.</b></p></div>",
                     unsafe_allow_html=True)
 
+    # ---- 6. the quiz ----------------------------------------------------
+    if i == 5:
+        st.markdown('<p class="lead">Five questions on what you have just read, '
+                    "using <b>this company's own numbers</b>.</p>",
+                    unsafe_allow_html=True)
+        quiz_slide(eq, latest, val, quote_)
+
+
+
+def quiz_slide(eq, latest, val, quote_):
+    """The last teach slide: check the terms just covered, against this
+    company's own numbers."""
+    eps = latest.get("eps")
+    ni = latest.get("net_income")
+    rev = latest.get("revenue")
+    margin = None if (ni is None or not rev) else 100 * ni / rev
+    ocf, capex = latest.get("ocf"), latest.get("capex")
+    fcf = None if (ocf is None or capex is None) else ocf - capex
+    pe = val.pe if val else None
+    dy = val.dividend_yield if val else None
+    q = quote_
+
+    qs = quiz_build(
+        eq.entity.split(",")[0].title(),
+        eps=eps, pe=pe, margin=margin,
+        price=q.price if q.available else None,
+        shares=latest.get("shares"),
+        fcf=(None if latest.get("ocf") is None or latest.get("capex") is None
+             else latest.get("ocf") - latest.get("capex")),
+        net_income=ni, dividend_yield=dy,
+        revenue_growth=None, income_growth=None,
+    )
+
+    if qs:
+        answers = st.session_state.setdefault("quiz", {})
+        for n, question in enumerate(qs):
+            key = f"q{n}"
+            st.markdown(f'<div class="qq"><span class="qn">Question {n + 1}</span>'
+                        f'<p>{E(question.prompt).replace("$", D)}</p></div>',
+                        unsafe_allow_html=True)
+            picked = st.radio(question.prompt, question.options, index=None,
+                              key=f"quiz_{key}", label_visibility="collapsed")
+            if picked is not None:
+                chose = question.options.index(picked)
+                answers[key] = chose == question.correct
+                if chose == question.correct:
+                    st.markdown('<div class="qa right"><b>Correct.</b> '
+                                + question.why.replace("$", D) + "</div>",
+                                unsafe_allow_html=True)
+                else:
+                    st.markdown(
+                        '<div class="qa wrong"><b>Not quite.</b> The answer is “'
+                        + E(question.options[question.correct]).replace("$", D)
+                        + "”. " + question.why.replace("$", D) + "</div>",
+                        unsafe_allow_html=True)
+
+        done = [v for k, v in answers.items() if k in {f"q{i}" for i in range(len(qs))}]
+        if len(done) == len(qs):
+            got = sum(done)
+            verdict, note = quiz_grade(got, len(qs))
+            tone = "up" if got / len(qs) >= 0.8 else "warn" if got / len(qs) >= 0.5 else "down"
+            st.markdown(f'<div class="qscore"><span class="big {tone}">{got}/{len(qs)}</span>'
+                        f'<p class="bigsub"><b>{E(verdict)}.</b> {E(note)}</p></div>',
+                        unsafe_allow_html=True)
+            if st.button("Try again", key="quiz_reset"):
+                for i in range(len(qs)):
+                    st.session_state.pop(f"quiz_q{i}", None)
+                st.session_state["quiz"] = {}
+                st.rerun()
+        else:
+            st.caption(f"{len(done)} of {len(qs)} answered. Nothing here is scored against you — "
+                       "the explanations are the point.")
 
 TEACH_TITLES = [
     "What am I buying?",
@@ -686,6 +758,7 @@ TEACH_TITLES = [
     "Is it getting better?",
     "Is it expensive?",
     "What is the score?",
+    "Now it's your turn",
 ]
 
 # --------------------------------------------------------------------------
@@ -902,66 +975,6 @@ if eq.quarters:
               "quarters filed, not a forecast.</span></span></div>")
     st.markdown(f'<div class="panel"><div class="qrow">{cells}</div>{rr}</div>',
                 unsafe_allow_html=True)
-
-# --------------------------------------------------------------------------
-# 04 now it is your turn
-# --------------------------------------------------------------------------
-# Questions built from this company's own figures, so the reader is checking
-# understanding of something they have just looked at rather than recalling a
-# definition in the abstract.
-
-sh("04", "Now it's your turn", "questions from this company's numbers")
-
-qs = quiz_build(
-    eq.entity.split(",")[0].title(),
-    eps=eps, pe=pe, margin=margin,
-    price=q.price if q.available else None,
-    shares=latest.get("shares"),
-    fcf=(None if latest.get("ocf") is None or latest.get("capex") is None
-         else latest.get("ocf") - latest.get("capex")),
-    net_income=ni, dividend_yield=dy,
-    revenue_growth=None, income_growth=None,
-)
-
-if qs:
-    answers = st.session_state.setdefault("quiz", {})
-    for n, question in enumerate(qs):
-        key = f"q{n}"
-        st.markdown(f'<div class="qq"><span class="qn">Question {n + 1}</span>'
-                    f'<p>{E(question.prompt).replace("$", D)}</p></div>',
-                    unsafe_allow_html=True)
-        picked = st.radio(question.prompt, question.options, index=None,
-                          key=f"quiz_{key}", label_visibility="collapsed")
-        if picked is not None:
-            chose = question.options.index(picked)
-            answers[key] = chose == question.correct
-            if chose == question.correct:
-                st.markdown('<div class="qa right"><b>Correct.</b> '
-                            + question.why.replace("$", D) + "</div>",
-                            unsafe_allow_html=True)
-            else:
-                st.markdown(
-                    '<div class="qa wrong"><b>Not quite.</b> The answer is “'
-                    + E(question.options[question.correct]).replace("$", D)
-                    + "”. " + question.why.replace("$", D) + "</div>",
-                    unsafe_allow_html=True)
-
-    done = [v for k, v in answers.items() if k in {f"q{i}" for i in range(len(qs))}]
-    if len(done) == len(qs):
-        got = sum(done)
-        verdict, note = quiz_grade(got, len(qs))
-        tone = "up" if got / len(qs) >= 0.8 else "warn" if got / len(qs) >= 0.5 else "down"
-        st.markdown(f'<div class="qscore"><span class="big {tone}">{got}/{len(qs)}</span>'
-                    f'<p class="bigsub"><b>{E(verdict)}.</b> {E(note)}</p></div>',
-                    unsafe_allow_html=True)
-        if st.button("Try again", key="quiz_reset"):
-            for i in range(len(qs)):
-                st.session_state.pop(f"quiz_q{i}", None)
-            st.session_state["quiz"] = {}
-            st.rerun()
-    else:
-        st.caption(f"{len(done)} of {len(qs)} answered. Nothing here is scored against you — "
-                   "the explanations are the point.")
 
 # --------------------------------------------------------------------------
 # 05 what management said
