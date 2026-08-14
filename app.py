@@ -319,6 +319,15 @@ div[data-testid="stHorizontalBlock"]{gap:1px !important}
 .qscore .bigsub{margin:.3rem 0 0}
 .qscore .bigsub b{color:#FFFFFF}
 
+
+/* the link row is the bottom of each card, aligned to it exactly */
+.nolink{height:100%;min-height:2.1rem;background:var(--surf);border:1px solid var(--line);
+  border-top:0;border-radius:0 0 0 10px}
+div[data-testid="stHorizontalBlock"]:has(button[kind]) .stButton button{
+  height:2.1rem;min-height:2.1rem}
+div[data-testid="stHorizontalBlock"]:has(button[kind])
+  div[data-testid="stColumn"]:last-child .stButton button{border-radius:0 0 10px 0}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -655,63 +664,7 @@ def teach_slide(i, eq, latest, card, val=None, quote_=None, px_hist=None):
                 "businesses, identical value, wildly different share prices.**\n\n"
                 "What matters is the price against what the company earns.")
 
-    # ---- 5. what would you have made -----------------------------------
-    elif i == 4:
-        if px_hist and len(px_hist) >= 2 and eps:
-            first_lab, p0 = px_hist[0]
-            p1 = quote_.price if quote_ and quote_.available else px_hist[-1][1]
-            e_series = eq.series("eps")
-            e0 = next((v for lab, v in e_series if lab == first_lab), None)
-
-            amt = st.slider("Amount invested", 100, 10_000, 1_000, 100, format="$%d")
-            if e0 and e0 > 0 and p0 > 0:
-                price_end = amt * (p1 / p0)
-                from_earnings = amt * (eps / e0) - amt
-                from_multiple = price_end - amt - from_earnings
-                divs = 0.0
-                dseries = dict(eq.series("dps"))
-                for lab, px in px_hist:
-                    d = dseries.get(lab)
-                    if d and px:
-                        divs += amt * (d / px)
-                total = price_end + divs
-
-                st.markdown(
-                    f'<span class="big {"up" if total >= amt else "down"}">'
-                    f'{D}{total:,.0f}</span>'
-                    f'<p class="bigsub">a {"gain" if total >= amt else "loss"} of '
-                    f'<b>{D}{abs(total - amt):,.0f}</b> over '
-                    f"{len(px_hist) - 1} years.</p>", unsafe_allow_html=True)
-
-                segs = [("business earnings", "var(--c2)", from_earnings),
-                        ("investors paying more", "var(--c1)", from_multiple),
-                        ("dividends", "var(--c3)", divs)]
-                segs = [x for x in segs if abs(x[2]) > amt * 0.005]
-                scale = sum(abs(x[2]) for x in segs) or 1
-                st.markdown('<div class="split2">' + "".join(
-                    f'<div style="width:{100 * abs(v) / scale:.1f}%;'
-                    + ("background:repeating-linear-gradient(45deg,#FF7B8A,#FF7B8A 5px,"
-                       "#E06070 5px,#E06070 10px)" if v < 0 else f"background:{c}")
-                    + '"></div>' for _, c, v in segs) + "</div>"
-                    + '<div class="skey">' + "".join(
-                        f'<span><i style="'
-                        + ("background:repeating-linear-gradient(45deg,#FF7B8A,#FF7B8A 4px,"
-                           "#E06070 4px,#E06070 8px)" if v < 0 else f"background:{c}")
-                        + f'"></i>{E(l)} <b>{"−" if v < 0 else "+"}{D}{abs(v):,.0f}</b></span>'
-                        for l, c, v in segs) + "</div>", unsafe_allow_html=True)
-
-                with st.expander("Where that came from"):
-                    st.markdown(
-                        "A return has three parts, and they are not the same thing.\n\n"
-                        "**The business earning more** is durable. **Investors paying more** "
-                        "can reverse overnight — nothing about the company changed. "
-                        "**Dividends** are already yours.")
-        else:
-            st.markdown('<p class="lead">This needs ten years of share prices, which are not '
-                        "available for this company. Everything else on the page comes from "
-                        "filings and still works.</p>", unsafe_allow_html=True)
-
-    # ---- 6. the score ---------------------------------------------------
+    # ---- 5. the score ---------------------------------------------------
     else:
         st.markdown('<p class="lead">The scorecard rates <b>what the filings show</b> — five '
                     "things the company has already reported.</p>", unsafe_allow_html=True)
@@ -732,7 +685,6 @@ TEACH_TITLES = [
     "The words you will see",
     "Is it getting better?",
     "Is it expensive?",
-    "What would you have made?",
     "What is the score?",
 ]
 
@@ -841,10 +793,12 @@ st.markdown('<div class="five">' + "".join(
     f'<span class="v {t}">{v}</span><span class="d">{d}</span>'
     + "</div>" for k, v, t, d, g in strip) + "</div>", unsafe_allow_html=True)
 
-glossable = [x for x in strip if x[4]]
-if glossable:
-    cols = st.columns(len(glossable))
-    for col, (k, _, _, _, g) in zip(cols, glossable):
+if any(x[4] for x in strip):
+    cols = st.columns(len(strip))
+    for col, (k, _, _, _, g) in zip(cols, strip):
+        if not g:
+            col.markdown('<div class="nolink"></div>', unsafe_allow_html=True)
+            continue
         if col.button("what does this mean? →", key=f"gl_{g}", use_container_width=True):
             # The radio owns st.session_state["mode"], so it cannot be written
             # here. Set a flag the radio's index reads on the next run.
