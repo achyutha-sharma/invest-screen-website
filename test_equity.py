@@ -391,6 +391,14 @@ Greater China and higher promotional activity across our wholesale channel.</p>
 markdowns on excess inventory and unfavourable foreign currency movements.</p>
 <p>These decreases were partially offset by growth in our direct-to-consumer
 channel, which increased 6% over the prior year.</p>
+<p>The following discussion should be read together with the consolidated
+financial statements and the related notes appearing elsewhere in this report,
+and contains forward-looking statements that involve risks and uncertainties.
+Our fiscal year ends on May 31 of each year. References to fiscal years are to
+the twelve months ended on that date. Amounts are presented in millions except
+per share data, unless otherwise indicated. Percentage changes have been
+calculated using unrounded figures and may not recompute from the rounded
+amounts shown in the accompanying tables and discussion below.</p>
 <p>See Note 14 for further detail on segment results.</p>
 <p>Item 7A. Quantitative and Qualitative Disclosures About Market Risk</p>
 <p>We are exposed to interest rate risk.</p>
