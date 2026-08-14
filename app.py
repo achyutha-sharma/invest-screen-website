@@ -426,9 +426,9 @@ def teach_slide(i, eq, latest, card):
                         unsafe_allow_html=True)
         with st.expander("Why the share price alone tells you nothing"):
             st.markdown(
-                f"A {DH}10 share is not cheaper than a {DH}200 share.\n\n"
-                f"Two companies, both worth {DH}100 million. One split itself into 10 million "
-                f"shares ({DH}10 each), the other into 500,000 ({DH}200 each). **Identical "
+                "A \\$10 share is not cheaper than a \\$200 share.\n\n"
+                "Two companies, both worth \\$100 million. One split itself into 10 million "
+                "shares (\\$10 each), the other into 500,000 (\\$200 each). **Identical "
                 "businesses, identical value, wildly different share prices.**\n\n"
                 "What matters is the price against what the company earns — the P/E, in slide 2.")
 
@@ -571,8 +571,12 @@ st.markdown(f'<span class="tk">{E(ticker)}</span>{day}<h2 class="co">{E(eq.entit
             f'{" · " if prof.get("industry") else ""}CIK {E(cik)} · '
             f'{E(latest.label)} · Form 10-K</p>', unsafe_allow_html=True)
 
-mode = st.radio("View", ["Research", "Teach me"], horizontal=True,
-                label_visibility="collapsed", key="mode")
+_views = ["Research", "Teach me"]
+_want = 1 if st.session_state.pop("goto_teach", False) else None
+if _want is not None:
+    st.session_state.pop("mode", None)
+mode = st.radio("View", _views, index=_want if _want is not None else 0,
+                horizontal=True, label_visibility="collapsed", key="mode")
 
 if mode == "Teach me":
     step = st.session_state.get("step", 0)
@@ -622,7 +626,7 @@ strip = [
 ]
 st.markdown('<div class="five">' + "".join(
     f'<div class="fv"><span class="k">{E(k)}</span>'
-    f'<span class="v {t}">{v}</span><span class="d">{E(d)}</span>'
+    f'<span class="v {t}">{v}</span><span class="d">{d}</span>'
     + (f'<span class="learn">what does this mean?</span>' if g else "")
     + "</div>" for k, v, t, d, g in strip) + "</div>", unsafe_allow_html=True)
 
@@ -630,7 +634,9 @@ if any(g for *_, g in strip):
     cols = st.columns(5)
     for col, (k, _, _, _, g) in zip(cols, [x for x in strip if x[4]]):
         if col.button(f"What is {k}?", key=f"gl_{g}", use_container_width=True):
-            st.session_state["mode"] = "Teach me"
+            # The radio owns st.session_state["mode"], so it cannot be written
+            # here. Set a flag the radio's index reads on the next run.
+            st.session_state["goto_teach"] = True
             st.session_state["step"] = 1
             st.rerun()
 
