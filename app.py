@@ -574,6 +574,8 @@ if "cik" not in st.session_state and not query and prices.configured:
             if col.button(f"what is {label}? →", key=f"fund_{tk}",
                           use_container_width=True):
                 st.session_state["fund"] = tk
+                for k in ("cik", "ticker", "name", "step"):
+                    st.session_state.pop(k, None)
                 st.rerun()
         st.caption("Funds tracking whole markets. They hold shares in hundreds of "
                    "companies rather than running a business, so there is no filing to "
@@ -592,6 +594,7 @@ if query:
         st.stop()
     chosen = hits[0] if len(hits) == 1 else st.selectbox(
         "Which company?", hits, format_func=lambda m: f"{m['name']} · {m['ticker']}")
+    st.session_state.pop("fund", None)
     st.session_state["cik"] = chosen["cik"]
     st.session_state["ticker"] = chosen["ticker"]
     st.session_state["name"] = chosen["name"]
@@ -602,6 +605,10 @@ if query:
 # A fund has no filing to read, so this page is explanation rather than
 # analysis: what the thing is, what moves it, and what to be wary of. Nothing
 # here is computed, because nothing here changes with the price.
+
+# Typing in the search box means leaving whatever page is open.
+if query and st.session_state.get("fund"):
+    st.session_state.pop("fund", None)
 
 if st.session_state.get("fund"):
     fd = funds_data.get(st.session_state["fund"])
