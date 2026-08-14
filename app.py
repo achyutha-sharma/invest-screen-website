@@ -282,11 +282,12 @@ div[role="radiogroup"] > label:has(input:checked) p{color:#0F1F17 !important;fon
 /* the glossary links read as the bottom row of the strip, not as controls */
 .five{border-bottom-left-radius:0;border-bottom-right-radius:0;border-bottom:0}
 div[data-testid="stHorizontalBlock"]:has(button[kind]) .stButton button{
-  background:var(--surf);border:1px solid var(--line);border-top:0;border-radius:0;
-  color:var(--acc);font-size:.62rem;font-weight:700;padding:.45rem .3rem;
-  letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  background:rgba(169,139,255,.13);border:1px solid var(--line);border-top:0;
+  border-radius:0;color:var(--acc-2);font-size:.56rem;font-weight:700;
+  letter-spacing:.04em;text-transform:lowercase;padding:.3rem .25rem;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 div[data-testid="stHorizontalBlock"]:has(button[kind]) .stButton button:hover{
-  background:var(--surf-2);color:var(--acc-2)}
+  background:var(--acc);color:#15112B;border-color:var(--acc)}
 div[data-testid="stHorizontalBlock"]{gap:1px !important}
 
 
@@ -320,10 +321,10 @@ div[data-testid="stHorizontalBlock"]{gap:1px !important}
 
 
 /* the link row is the bottom of each card, aligned to it exactly */
-.nolink{height:100%;min-height:2.1rem;background:var(--surf);border:1px solid var(--line);
+.nolink{height:100%;min-height:1.65rem;background:var(--surf);border:1px solid var(--line);
   border-top:0;border-radius:0 0 0 10px}
 div[data-testid="stHorizontalBlock"]:has(button[kind]) .stButton button{
-  height:2.1rem;min-height:2.1rem}
+  height:1.65rem;min-height:1.65rem}
 div[data-testid="stHorizontalBlock"]:has(button[kind])
   div[data-testid="stColumn"]:last-child .stButton button{border-radius:0 0 10px 0}
 
@@ -529,29 +530,12 @@ query = st.text_input("Company name or ticker", placeholder="Search").strip()
 # market would take thousands of calls a minute, so this is deliberately
 # labelled as a watchlist rather than dressed up as "today's biggest movers".
 
-WATCHLIST = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META",
-             "NKE", "SBUX", "NFLX", "DIS", "KO", "JPM"]
-
 # Ticker, label, and what it tracks. Funds, so no research page exists.
 MARKET = [
     ("SPY", "S&P 500", "500 large US companies"),
     ("QQQ", "Nasdaq 100", "the largest non-financial tech names"),
     ("GLD", "Gold", "bullion held in a vault"),
 ]
-
-
-@st.cache_data(show_spinner=False, ttl=600)
-def movers(tickers: tuple) -> list[dict]:
-    """Watchlist quotes, biggest move first. Quiet when there is no feed."""
-    out = []
-    for tk in tickers:
-        try:
-            qt = prices.quote(tk)
-        except Exception:
-            continue
-        if qt.available and qt.day_change_pct is not None:
-            out.append({"ticker": tk, "price": qt.price, "pct": qt.day_change_pct})
-    return sorted(out, key=lambda r: abs(r["pct"]), reverse=True)
 
 
 if "cik" not in st.session_state and not query and prices.configured:
@@ -575,31 +559,6 @@ if "cik" not in st.session_state and not query and prices.configured:
                    "companies rather than running a business, so there is no filing to "
                    "research — but they tell you whether a stock moved on its own news or "
                    "with everything else.")
-
-if "cik" not in st.session_state and not query:
-    rows = movers(tuple(WATCHLIST))[:3] if prices.configured else []
-    if rows:
-        st.markdown('<p class="picker">Moving most today</p>', unsafe_allow_html=True)
-        cards = "".join(
-            f'<div class="mv"><span class="mt">{E(r["ticker"])}</span>'
-            f'<span class="mp">{D}{r["price"]:,.2f}</span>'
-            f'<span class="mc {"up" if r["pct"] >= 0 else "down"}">'
-            f'{"▲" if r["pct"] >= 0 else "▼"} {abs(r["pct"]):.2f}%</span></div>'
-            for r in rows)
-        st.markdown(f'<div class="movers">{cards}</div>', unsafe_allow_html=True)
-
-        cols = st.columns(3)
-        for col, r in zip(cols, rows):
-            if col.button(f"Open {r['ticker']}", key=f"mv_{r['ticker']}",
-                          use_container_width=True):
-                hits = search(r["ticker"])
-                if hits:
-                    st.session_state["cik"] = hits[0]["cik"]
-                    st.session_state["ticker"] = hits[0]["ticker"]
-                    st.session_state["name"] = hits[0]["name"]
-                    st.rerun()
-        st.caption("A short watchlist of large companies, ranked by today's move — not a "
-                   "scan of the whole market.")
 
 if query:
     try:
@@ -1019,7 +978,7 @@ if any(x[4] for x in strip):
         if not g:
             col.markdown('<div class="nolink"></div>', unsafe_allow_html=True)
             continue
-        if col.button("what does this mean? →", key=f"gl_{g}", use_container_width=True):
+        if col.button("what is this? →", key=f"gl_{g}", use_container_width=True):
             # The radio owns st.session_state["mode"], so it cannot be written
             # here. Set a flag the radio's index reads on the next run.
             st.session_state["goto_teach"] = True
