@@ -619,7 +619,10 @@ if "cik" not in st.session_state and not query and prices.configured:
                    "research — but they tell you whether a stock moved on its own news or "
                    "with everything else.")
 
-if query and st.session_state.pop("just_opened", False):
+# A query that has already been acted on must not re-trigger. Streamlit reruns
+# the whole script on every interaction, and the search box keeps its text, so
+# without this any click on an open page would bounce back to the results.
+if query and query == st.session_state.get("searched"):
     query = ""
 
 if query:
@@ -652,7 +655,7 @@ if query:
             st.session_state["cik"] = h["cik"]
             st.session_state["ticker"] = h["ticker"]
             st.session_state["name"] = h["name"]
-            st.session_state["just_opened"] = True
+            st.session_state["searched"] = query
             st.rerun()
     st.stop()
 
@@ -666,6 +669,7 @@ if query:
 # Typing in the search box means leaving whatever page is open.
 if query and st.session_state.get("fund"):
     st.session_state.pop("fund", None)
+    st.session_state.pop("searched", None)
 
 if st.session_state.get("fund"):
     fd = funds_data.get(st.session_state["fund"])
@@ -1142,7 +1146,7 @@ if mode == "Teach me":
                 "and Exchange Commission. Educational only — not advice to buy or sell "
                 "anything.</p>", unsafe_allow_html=True)
     if st.button("← Search another company"):
-        for k in ("cik", "ticker", "name", "step"):
+        for k in ("cik", "ticker", "name", "step", "searched", "quiz", "quiz_round"):
             st.session_state.pop(k, None)
         st.rerun()
     st.stop()
@@ -1501,6 +1505,6 @@ st.markdown('<p class="disc">Figures come from SEC filings. Share price and toda
             unsafe_allow_html=True)
 
 if st.button("← Search another company"):
-    for k in ("cik", "ticker", "name"):
+    for k in ("cik", "ticker", "name", "step", "searched", "quiz", "quiz_round"):
         st.session_state.pop(k, None)
     st.rerun()
