@@ -327,6 +327,26 @@ div[data-testid="stHorizontalBlock"]:has(button[kind]) .stButton button{
 div[data-testid="stHorizontalBlock"]:has(button[kind])
   div[data-testid="stColumn"]:last-child .stButton button{border-radius:0 0 10px 0}
 
+
+/* three-year table */
+.years{width:100%;border-collapse:collapse}
+.years th{font-size:.6rem;letter-spacing:.11em;text-transform:uppercase;color:var(--text-3);
+  font-weight:700;padding:.55rem .7rem;text-align:right;border-bottom:1px solid var(--line)}
+.years th:first-child{text-align:left}
+.years td{padding:.65rem .7rem;text-align:right;font-family:var(--mono);font-size:.92rem;
+  font-weight:700;color:#FFFFFF;border-bottom:1px solid var(--line)}
+.years tr:last-child td{border-bottom:0}
+.years td.mname{text-align:left;font-family:'Archivo',sans-serif;min-width:150px}
+.years td.mname b{display:block;font-size:.88rem;color:#FFFFFF}
+.years td.mname i{display:block;font-style:normal;font-size:.7rem;color:var(--text-3);
+  font-weight:400;margin-top:.1rem}
+.years td.tcol{min-width:74px}
+.years tbody tr:hover td{background:rgba(169,139,255,.05)}
+.trend{font-family:var(--mono);font-size:.8rem;font-weight:700}
+.trend.up{color:var(--up)} .trend.down{color:var(--down)} .trend.flat{color:var(--text-3)}
+.qc .qv.up{color:var(--up)} .qc .qv.down{color:var(--down)}
+.qc .qs.up{color:var(--up)} .qc .qs.down{color:var(--down)}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -879,33 +899,76 @@ if any(x[4] for x in strip):
 # 01 the numbers
 # --------------------------------------------------------------------------
 
-sh("The numbers", latest.label)
-fcf = None
-if latest.get("ocf") is not None and latest.get("capex") is not None:
-    fcf = latest.get("ocf") - latest.get("capex")
+sh("The numbers", "last three years")
 
-rows = [
-    ("EPS — earnings per share", f"{D}{eps:,.2f}" if eps is not None else "—",
-     f"Last year's profit split across {latest.get('shares'):,.0f} shares."
-     if latest.get("shares") else "Profit belonging to one share.",
-     "Over long stretches a share price tends to follow this figure."),
-    ("Revenue", money(rev, html=False), "Everything customers paid, before any cost.",
-     "Tells you whether customers are still coming — not whether the company keeps any of it."),
-    ("Net income", money(ni, html=False), "What was left after every cost.",
-     "The bottom line. Compare its direction against revenue: profit growing slower than "
-     "sales means costs are rising faster than the business."),
-    ("Free cash flow", money(fcf, html=False),
-     f"Cash after running the business and its capital spending."
-     + (f" Against {money(ni, html=False)} of reported profit." if ni else ""),
-     "Profit is an opinion. Cash is a fact."),
-    ("Dividend per share", f"{D}{dps:,.2f}" if dps else "none declared",
-     "Cash the company declared for each share." if dps
-     else "This company pays no dividend — the cash is reinvested instead.",
-     "The only part of a return a falling price cannot take back."),
+def series3(key):
+    """The three most recent filed values, oldest first."""
+    got = eq.series(key)
+    return got[-3:] if got else []
+
+
+def fcf_series():
+    out = []
+    for p in eq.years:
+        o, c = p.get("ocf"), p.get("capex")
+        if o is not None and c is not None:
+            out.append((p.label, o - c))
+    return out[-3:]
+
+
+def margin_series():
+    out = []
+    for p in eq.years:
+        n, r = p.get("net_income"), p.get("revenue")
+        if n is not None and r:
+            out.append((p.label, 100 * n / r))
+    return out[-3:]
+
+
+LINES = [
+    ("Revenue", series3("revenue"), money, "higher", "everything customers paid"),
+    ("Net income", series3("net_income"), money, "higher", "what was left after every cost"),
+    ("EPS", series3("eps"), lambda v: f"{D}{v:,.2f}", "higher", "profit belonging to one share"),
+    ("Net margin", margin_series(), lambda v: f"{v:,.1f}%", "higher",
+     "kept from every " + D + "100 of sales"),
+    ("Free cash flow", fcf_series(), money, "higher", "cash after capital spending"),
+    ("Dividend per share", series3("dps"), lambda v: f"{D}{v:,.2f}", "higher",
+     "cash declared per share"),
+    ("Total debt", series3("total_debt"), money, "lower", "everything borrowed"),
 ]
-for label, v, says, why in rows:
-    with st.expander(f"{label}   ·   {v.replace('&#36;', '$')}"):
-        st.markdown(f"{says}\n\n**Why it matters.** {why}")
+
+def arrow(vals, better):
+    """Direction against the earliest of the three years shown."""
+    if len(vals) < 2:
+        return ""
+    first, last_v = vals[0][1], vals[-1][1]
+    if not first:
+        return ""
+    chg = 100 * (last_v / first - 1) if first > 0 else None
+    if chg is None or abs(chg) < 0.5:
+        return '<span class="trend flat">—</span>'
+    good = (chg > 0) if better == "higher" else (chg < 0)
+    return (f'<span class="trend {"up" if good else "down"}">'
+            f'{"▲" if chg > 0 else "▼"}{abs(chg):,.0f}%</span>')
+
+have = [x for x in LINES if x[1]]
+if have:
+    labels = [lab for lab, _ in max((x[1] for x in have), key=len)]
+    head = "<tr><th>Measure</th>" + "".join(f"<th>{E(l)}</th>" for l in labels) \
+        + "<th>3-yr</th></tr>"
+    body = ""
+    for name, vals, fmt, better, hint in have:
+        got = dict(vals)
+        cells = ""
+        for l in labels:
+            v = got.get(l)
+            cells += f"<td>{fmt(v) if v is not None else '—'}</td>"
+        body += (f'<tr><td class="mname"><b>{E(name)}</b><i>{hint}</i></td>'
+                 f'{cells}<td class="tcol">{arrow(vals, better)}</td></tr>')
+    st.markdown(f'<div class="panel"><table class="years"><thead>{head}</thead>'
+                f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
+    st.caption("Green is the direction you would rather see — for debt that means falling. "
+               "The last column compares the newest year with the oldest shown.")
 
 # --------------------------------------------------------------------------
 # 02 where the money goes
@@ -952,12 +1015,15 @@ if eq.quarters:
     for i in range(4):
         if i < len(eq.quarters):
             qq = eq.quarters[i]
-            qeps = qq.get("eps")
+            chg = qq.change("revenue")
+            tone = "" if chg is None else ("up" if chg >= 0 else "down")
             cells += (f'<div class="qc"><span class="ql">{qq.fp}</span>'
-                      f'<span class="qv">{money(qq.get("revenue"))}</span>'
-                      f'<span class="qs">'
-                      + (f'{D}{qeps:,.2f} per share' if qeps is not None else "EPS not filed")
-                      + "</span></div>")
+                      f'<span class="qv {tone}">{money(qq.get("revenue"))}</span>'
+                      + (f'<span class="qs {tone}">'
+                         f'{"▲" if chg >= 0 else "▼"}{abs(chg):,.1f}% on {qq.fp} last year'
+                         "</span>" if chg is not None else
+                         '<span class="qs">no year-ago figure filed</span>')
+                      + "</div>")
         else:
             cells += ('<div class="qc pending"><span class="ql">Q'
                       f'{i + 1}</span><span class="qv">—</span>'
@@ -1101,9 +1167,8 @@ if eq.notes:
                 + "".join(f"<p>{E(n)}</p>" for n in eq.notes) + "</div>",
                 unsafe_allow_html=True)
 
-st.markdown('<p class="disc">Every figure comes from filings made to the U.S. Securities and '
-            "Exchange Commission. Share price is not yet wired in, so valuation rows are "
-            "unavailable. Educational research only — not advice to buy or sell anything.</p>",
+st.markdown('<p class="disc">Figures come from SEC filings. Share price and today\'s '
+            "move come from a market feed. Educational research only — not advice.</p>",
             unsafe_allow_html=True)
 
 if st.button("← Search another company"):
