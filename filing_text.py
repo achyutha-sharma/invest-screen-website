@@ -108,18 +108,41 @@ def _item_span(text: str, start_pat: str, end_pat: str) -> str | None:
     # section is closed by its terminator; the table of contents entry is a
     # line long; a cross-reference in the notes has no terminator at all. So
     # the answer is the longest properly-closed span.
-    closed, open_ended = [], []
+    # Filings mention an item heading many times: once in the table of
+    # contents, once as the section itself, and repeatedly as cross-references
+    # in later discussion. Three tests separate them.
+    candidates = []
     for start in starts:
         after = text[start:]
-        e = re.search(end_pat, after, re.I)
-        if e and e.start() > 400:
-            closed.append(after[: e.start()])
-        elif len(after) > 400:
-            open_ended.append(after[:120_000])
 
-    if closed:
-        return max(closed, key=len)
-    return open_ended[0] if open_ended else None
+        # A contents entry is followed by a page number and the next item.
+        lead = " ".join(after[:160].split())
+        if re.match(r"^item\s*\S{0,4}\s*[A-Za-z ,'&]{0,40}[\s.]{1,40}\d{1,3}\s+item\s",
+                    lead, re.I):
+            continue
+
+        # A cross-reference is introduced: "...see Item 1A. Risk Factors for
+        # further discussion". Looking behind the heading is reliable; looking
+        # ahead is not, because real headings contain words like "and".
+        before = " ".join(text[max(0, start - 60):start].split())
+        if re.search(r"\b(see|in|under|refer(?:ence)?d? to|described in|discussed in)\s*$",
+                     before, re.I):
+            continue
+
+        floor = 2_000 if len(text) > 50_000 else 300
+        e = re.search(end_pat, after, re.I)
+        span = after[: e.start()] if e and e.start() > floor else after[:120_000]
+        if len(span) > floor:
+            candidates.append(span)
+
+    if not candidates:
+        return None
+    # The earliest survivor, not the longest. Sections appear in order, so the
+    # first candidate that is neither a contents line nor a cross-reference is
+    # the section itself -- whereas a stray reference late in the notes can be
+    # followed by tens of thousands of characters of tables and would win on
+    # length alone.
+    return candidates[0]
 
 
 # --------------------------------------------------------------------------
