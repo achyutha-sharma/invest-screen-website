@@ -14,7 +14,6 @@ import os
 import streamlit as st
 
 from filing_text import latest_filings, read_filing
-from peers import suggest
 from prices import PriceClient
 from quiz import build as quiz_build, grade as quiz_grade, pick as quiz_pick
 from scorecard import score
@@ -426,9 +425,15 @@ def pct(v, dp=1):
     return "—" if v is None else f"{'+' if v >= 0 else '−'}{abs(v):.{dp}f}%"
 
 
-def sh(n, title, note=""):
+_section_no = [0]
+
+
+def sh(title, note=""):
+    """Numbered section heading. Numbers are assigned as sections render, so a
+    company missing one does not leave a gap in the sequence."""
+    _section_no[0] += 1
     st.markdown(
-        f'<div class="sh"><span class="n">{n}</span><h3>{E(title)}</h3>'
+        f'<div class="sh"><span class="n">{_section_no[0]:02d}</span><h3>{E(title)}</h3>'
         + (f'<span class="note">{E(note)}</span>' if note else "") + "</div>",
         unsafe_allow_html=True)
 
@@ -441,35 +446,11 @@ def ratio(a, b):
 # Search
 # --------------------------------------------------------------------------
 
-POPULAR = [("NKE", "Nike"), ("SBUX", "Starbucks"), ("NFLX", "Netflix"),
-           ("AAPL", "Apple"), ("HD", "Home Depot"), ("KO", "Coca-Cola")]
-
 if "cik" not in st.session_state:
     st.markdown('<h1 class="hero">Research a stock <em>properly</em>.</h1>'
-                '<p class="sub">Straight from SEC filings, plainly explained.</p>', unsafe_allow_html=True)
+                '<p class="sub">Straight from SEC filings.</p>', unsafe_allow_html=True)
 
 query = st.text_input("Company name or ticker", placeholder="Nike, Starbucks, Netflix").strip()
-
-if "cik" not in st.session_state and not query:
-    st.markdown('<p class="picker">Or start with one of these</p>', unsafe_allow_html=True)
-    for row in (POPULAR[:3], POPULAR[3:]):
-        for col, (tk, nm) in zip(st.columns(3), row):
-            if col.button(nm, key=f"pop_{tk}", use_container_width=True):
-                hits = search(tk)
-                if hits:
-                    st.session_state["cik"] = hits[0]["cik"]
-                    st.session_state["ticker"] = hits[0]["ticker"]
-                    st.session_state["name"] = hits[0]["name"]
-                    st.rerun()
-
-    st.markdown('''<div class="trio">
-      <div class="tr"><b>Filed, not estimated</b>
-        <span>Every figure comes from a filing made to the SEC.</span></div>
-      <div class="tr"><b>Flags what does not apply</b>
-        <span>Some ratios are meaningless for some filers. We say so.</span></div>
-      <div class="tr"><b>No recommendations</b>
-        <span>What happened, and what the price assumes. You decide.</span></div>
-    </div>''', unsafe_allow_html=True)
 
 if query:
     try:
@@ -500,7 +481,17 @@ except ValueError as e:
     st.warning(str(e))
     st.stop()
 except Exception as e:
-    st.error(f"Could not load filings: {e}")
+    if "404" in str(e):
+        st.warning(
+            "This filer has no XBRL financial data at the SEC. That is normal for funds, "
+            "trusts and holding companies, which file in a different format. Try an "
+            "operating company.")
+    else:
+        st.error(f"Could not load filings: {e}")
+    if st.button("← Search again"):
+        for k in ("cik", "ticker", "name"):
+            st.session_state.pop(k, None)
+        st.rerun()
     st.stop()
 
 prof = profile(cik)
@@ -669,7 +660,7 @@ def teach_slide(i, eq, latest, card, val=None, quote_=None, px_hist=None):
         colour = {"good": "var(--up)", "mid": "var(--warn)", "bad": "var(--down)"}[card.tone]
         st.markdown(f'<span class="big" style="color:{colour}">{card.stars:.1f}'
                     '<span style="font-size:1.2rem;color:var(--text-3)">/5</span></span>'
-                    f'<p class="bigsub">{E(card.verdict)}. Section 08 shows each component.</p>',
+                    f'<p class="bigsub">{E(card.verdict)}. The scorecard below shows each component.</p>',
                     unsafe_allow_html=True)
         st.markdown('<div class="finish"><h4>🎉 That is a company, read end to end.</h4>'
                     "<p><b>A rising stock is not a better business.</b> "
@@ -849,7 +840,7 @@ if mode == "Teach me":
     st.stop()
 
 strip = [
-    ("Score", f"{card.stars:.1f}/5", card.tone, "see section 08 for why", None),
+    ("Score", f"{card.stars:.1f}/5", card.tone, "see the scorecard below", None),
     ("Share price", f"{D}{q.price:,.2f}" if q.available else "no feed",
      "" if q.available else "dim",
      f"as of {q.as_of}" if q.as_of else (q.problem or "price unavailable"), "price"),
@@ -888,7 +879,7 @@ if any(x[4] for x in strip):
 # 01 the numbers
 # --------------------------------------------------------------------------
 
-sh("01", "The numbers", latest.label)
+sh("The numbers", latest.label)
 fcf = None
 if latest.get("ocf") is not None and latest.get("capex") is not None:
     fcf = latest.get("ocf") - latest.get("capex")
@@ -924,7 +915,7 @@ gross = latest.get("gross_profit")
 ebit = latest.get("ebit")
 capex = latest.get("capex")
 if rev and (gross is not None or ebit is not None):
-    sh("02", "Where the money goes", latest.label)
+    sh("Where the money goes", latest.label)
     lines = [("Revenue", "total sales", rev, "var(--acc)")]
     if gross is not None:
         lines.append(("Cost of revenue", "making the product", -(rev - gross), "var(--c5)"))
@@ -953,7 +944,7 @@ if rev and (gross is not None or ebit is not None):
 # --------------------------------------------------------------------------
 
 if eq.quarters:
-    sh("03", "This year so far", f"{len(eq.quarters)} of 4 quarters filed")
+    sh("This year so far", f"{len(eq.quarters)} of 4 quarters filed")
     ytd = sum(qq.get("revenue") for qq in eq.quarters if qq.get("revenue"))
     run = ytd / len(eq.quarters) * 4
     last_year = rev
@@ -991,7 +982,7 @@ if eq.quarters:
 ft = prose(cik)
 
 if ft and ft.mda:
-    sh("05", "What management said", f"{ft.form} filed {ft.filed}")
+    sh("What management said", f"{ft.form} filed {ft.filed}")
     st.markdown('<div class="panel quote">'
                 + "".join(f"<p>“{E(x)}”</p>" for x in ft.mda)
                 + '<span class="src">Quoted verbatim from the filing — not summarised</span>'
@@ -1004,7 +995,7 @@ if ft and ft.mda:
             "reason**, so this tool does not guess one.")
 
 if ft and ft.risks:
-    sh("06", "What could go wrong", "the company's own list")
+    sh("What could go wrong", "the company's own list")
     st.markdown('<div class="panel risk">'
                 + "".join(f'<div class="rr">{E(r)}</div>' for r in ft.risks)
                 + "</div>", unsafe_allow_html=True)
@@ -1017,74 +1008,6 @@ if ft and ft.risks:
 # Typed by the reader rather than parsed from the filing. Deciding who counts
 # as a peer is a judgement, and a chosen set beats a guessed one.
 
-sh("07", "Compare with peers", "tap a company to open it")
-
-suggested, why_peers = suggest(ticker, sic=str(prof.get("sic") or ""))
-peer_list = suggested
-
-rows, missed = [], []
-for tk in peer_list:
-    hits = search(tk)
-    if not hits or hits[0]["cik"] == cik:
-        missed.append(tk)
-        continue
-    try:
-        h = hits[0]
-        peq = extract_equity(facts(h["cik"]), cik=h["cik"])
-        pq = quote(h["ticker"])
-        pv = value(peq, price=pq.price if pq.available else None)
-        pl = peq.latest
-        pm = (None if pl.get("net_income") is None or not pl.get("revenue")
-              else 100 * pl["net_income"] / pl["revenue"])
-        rows.append({"cik": h["cik"], "ticker": h["ticker"],
-                     "name": peq.entity.split(",")[0].title(),
-                     "pe": pv.pe, "margin": pm, "dy": pv.dividend_yield,
-                     "day": pq.day_change_pct})
-    except Exception:
-        missed.append(tk)
-
-if rows:
-    def cell(v, suffix="", dp=2):
-        return "—" if v is None else f"{v:,.{dp}f}{suffix}"
-
-    def daycell(v):
-        """The day move sits beside the name, small, so the ratios stay the
-        focus -- it is context, not one of the things being compared."""
-        if v is None:
-            return ""
-        return (f'<span class="mini {"up" if v >= 0 else "down"}">'
-                f'{"▲" if v >= 0 else "▼"}{abs(v):.2f}%</span>')
-
-    head = ("<tr><th>Company</th><th>P/E</th><th>Net margin</th>"
-            "<th>Div. yield</th></tr>")
-    body = (f'<tr class="self"><td>{E(eq.entity.split(",")[0].title())}'
-            f'{daycell(q.day_change_pct)}</td>'
-            f"<td>{cell(pe, '×')}</td><td>{cell(margin, '%')}</td>"
-            f"<td>{cell(dy, '%')}</td></tr>")
-    for r in rows:
-        body += (f'<tr><td>{E(r["name"])}{daycell(r["day"])}</td>'
-                 f'<td>{cell(r["pe"], "×")}</td>'
-                 f'<td>{cell(r["margin"], "%")}</td><td>{cell(r["dy"], "%")}</td></tr>')
-    st.markdown(f'<div class="panel"><table class="comp"><thead>{head}</thead>'
-                f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
-
-    # Tapping a peer opens it, which is the whole point of showing the table.
-    cols = st.columns(min(len(rows), 4))
-    for col, r in zip(cols, rows):
-        if col.button(f"Open {r['ticker']}", key=f"peer_{r['ticker']}",
-                      use_container_width=True):
-            st.session_state["cik"] = r["cik"]
-            st.session_state["ticker"] = r["ticker"]
-            st.session_state["name"] = r["name"]
-            for k in ("peer_edit", "step"):
-                st.session_state.pop(k, None)
-            st.rerun()
-    st.caption(why_peers + " What counts as a normal multiple differs completely between "
-               "industries, so a peer set beats a fixed threshold.")
-elif why_peers and not peer_list:
-    st.caption(why_peers)
-
-
 # --------------------------------------------------------------------------
 # 09 what would have to happen
 # --------------------------------------------------------------------------
@@ -1093,7 +1016,7 @@ elif why_peers and not peer_list:
 # when assumptions nobody knows are changed.
 
 if eps and eps > 0:
-    sh("09", "What would have to happen", "move the sliders")
+    sh("What would have to happen", "move the sliders")
     start_pe = float(round(pe)) if pe else 20.0
     c1, c2 = st.columns(2)
     g = c1.slider("EPS growth a year", -10.0, 25.0, 5.0, 0.5, format="%.1f%%")
@@ -1125,7 +1048,7 @@ if eps and eps > 0:
 
 fl = filings(cik)
 if fl:
-    sh("10", "Recent filings", "newest first")
+    sh("Recent filings", "newest first")
     kinds = {"10-K": ("k", "Annual report"), "10-Q": ("q", "Quarterly report"),
              "8-K": ("e", "Current report")}
     items = ""
@@ -1143,7 +1066,7 @@ if fl:
 # 08 the scorecard
 # --------------------------------------------------------------------------
 
-sh("08", "The scorecard", "what the filings answer")
+sh("The scorecard", "what the filings answer")
 dots = ""
 for i in range(5):
     f = card.stars - i
@@ -1173,7 +1096,7 @@ st.markdown(f'''<div class="panel">
 # --------------------------------------------------------------------------
 
 if eq.notes:
-    sh("09", "Worth knowing", "how these figures were built")
+    sh("Worth knowing", "how these figures were built")
     st.markdown('<div class="panel note-list">'
                 + "".join(f"<p>{E(n)}</p>" for n in eq.notes) + "</div>",
                 unsafe_allow_html=True)
