@@ -475,6 +475,48 @@ def test_risk_junk_rejected():
     print("risk junk rejected ok")
 
 
+
+
+def test_span_picks_real_section():
+    """Item headings appear three times: contents, section, cross-reference.
+
+    A real filing has all three, and only the middle one is the section. Taking
+    the first gives a contents line; taking the last gives whatever tables
+    follow a note. The parser must pick the properly-closed span between them.
+    """
+    from filing_text import _item_span, extract_risks, to_text
+
+    doc = to_text(
+        "<html><body>"
+        # 1. table of contents
+        "<p>Item 1A. Risk Factors .......... 12</p>"
+        "<p>Item 1B. Unresolved Staff Comments .......... 20</p>"
+        # 2. the real section
+        "<p>Item 1A. Risk Factors</p>"
+        "<p>A shift in consumer preferences could reduce demand for our products</p>"
+        "<p>Weather patterns may affect store traffic in any given quarter</p>"
+        + "<p>Explanatory text. </p>" * 60 +
+        "<p>Item 1B. Unresolved Staff Comments</p><p>None.</p>"
+        "<p>Item 8. Financial Statements</p>"
+        # 3. a cross-reference deep in the notes, followed by tables
+        + "<p>See Item 1A. Risk Factors for further discussion.</p>"
+        + "".join(f"<p>Balance at May 31, 202{i} 1,2{i}4 $ 3,4{i}5</p>" for i in range(5)) * 40
+        + "</body></html>")
+
+    span = _item_span(doc, r"item\s*1a[\.\s]{0,4}risk\s*factors",
+                      r"item\s*1b[\.\s]{0,4}unresolved|item\s*2[\.\s]{0,4}propert")
+    assert span is not None
+    assert "consumer preferences" in span, span[:120]
+    assert "Balance at May 31" not in span, "picked the cross-reference, not the section"
+
+    risks, why = extract_risks(doc)
+    assert not why, why
+    assert any("consumer preferences" in r for r in risks), risks
+    assert any("Weather patterns" in r for r in risks), risks
+    assert not any("Balance at" in r for r in risks), risks
+    print("span selection ok")
+
+
 def main():
     test_clean()
     test_valuation()
@@ -485,6 +527,7 @@ def main():
     test_prices()
     test_filing_text()
     test_risk_junk_rejected()
+    test_span_picks_real_section()
     print("\nAll checks passed.")
 
 
