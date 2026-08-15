@@ -564,6 +564,35 @@ div[data-testid="stHorizontalBlock"] .stButton button em{
   color:var(--acc-2);font-size:.6rem;font-style:normal;font-weight:700;
   text-transform:lowercase;letter-spacing:.02em}
 
+
+
+/* ------------------------------------------------------------------ *
+ * Mobile
+ * ------------------------------------------------------------------ */
+@media (max-width:640px){
+  /* the three-year table scrolls sideways rather than squeezing, with the
+     measure name pinned so a scrolled row still says what it is */
+  .panel:has(.years){overflow-x:auto;-webkit-overflow-scrolling:touch;padding:.85rem .7rem}
+  .years{min-width:540px}
+  .years td.mname{min-width:118px;position:sticky;left:0;background:var(--surf);z-index:2;
+    box-shadow:3px 0 8px -5px #000}
+  .years td.mname i{display:none}
+  .years td,.years th{padding:.5rem .45rem;font-size:.82rem}
+  .years td.tcol{min-width:56px}
+  .panel:has(.comp){overflow-x:auto}
+  .comp{min-width:440px}
+
+  /* the toggle: full width, and no radio circles */
+  div[role="radiogroup"]{width:100%;display:flex !important}
+  div[role="radiogroup"] > label{flex:1;justify-content:center;text-align:center;
+    padding:.5rem .4rem !important}
+  div[role="radiogroup"] > label > div:first-child{display:none !important}
+
+  .hero{font-size:1.55rem} h2.co{font-size:1.4rem}
+  .movegrid{grid-template-columns:1fr}
+  .block-container{padding-left:.8rem;padding-right:.8rem}
+}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
