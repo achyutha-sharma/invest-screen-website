@@ -521,13 +521,16 @@ div[data-testid="stVerticalBlock"] .stButton button[aria-label*="SCORE"],
 button[data-testid^="stBaseButton"]{}
 
 .card{background:var(--surf);border:1px solid var(--line);border-radius:10px;
-  padding:.85rem .95rem;display:block;height:100%}
+  padding:.85rem .95rem;height:100%;box-sizing:border-box;
+  display:flex;flex-direction:column}
 .card .ck{display:block;font-size:.58rem;letter-spacing:.11em;text-transform:uppercase;
   color:var(--text-3);font-weight:700;margin-bottom:.3rem;line-height:1.3}
 .card .cv{display:block;font-family:var(--mono);font-size:1.28rem;font-weight:700;
   letter-spacing:-.025em;color:#FFFFFF}
 .card .cv.good{color:var(--up)} .card .cv.watch{color:var(--warn)} .card .cv.weak{color:var(--down)}
-.card .cd{display:block;font-size:.7rem;color:var(--text-2);margin-top:.35rem;line-height:1.45}
+/* pushed to the bottom so cards of different caption lengths still align */
+.card .cd{display:block;font-size:.7rem;color:var(--text-2);line-height:1.45;
+  margin-top:auto;padding-top:.35rem}
 
 
 /* metric cards: buttons dressed as panels, so the whole card is clickable */
@@ -576,6 +579,36 @@ div[data-testid="stHorizontalBlock"] .stButton button em{
   .movegrid{grid-template-columns:1fr}
   .block-container{padding-left:.8rem;padding-right:.8rem}
 }
+
+
+/* ------------------------------------------------------------------ *
+ * Mobile corrections
+ * ------------------------------------------------------------------ */
+@media (max-width:640px){
+  /* the toggle: fill the width so labels never wrap mid-word, and hide
+     the radio marks, which no other control on the page uses */
+  div[role="radiogroup"]{width:100% !important;display:flex !important;gap:.2rem}
+  div[role="radiogroup"] > label{flex:1 1 0;min-width:0;justify-content:center;
+    text-align:center;padding:.55rem .3rem !important;white-space:nowrap}
+  div[role="radiogroup"] > label > div:first-child,
+  div[role="radiogroup"] input,
+  div[role="radiogroup"] [data-baseweb="radio"] > div:first-child{display:none !important}
+  div[role="radiogroup"] > label p{font-size:.85rem !important;white-space:nowrap}
+
+  /* cards: equal height in each row, tighter gaps */
+  div[data-testid="stHorizontalBlock"]{gap:.5rem !important;align-items:stretch}
+  div[data-testid="stColumn"]{display:flex}
+  .card{width:100%;min-height:100%;padding:.8rem .85rem}
+  .card .cv{font-size:1.35rem}
+  .card .cd{font-size:.72rem;line-height:1.4}
+
+  .block-container{padding-left:.75rem;padding-right:.75rem}
+  h2.co{font-size:1.45rem}
+  .one{font-size:.85rem}
+}
+
+/* the column must stretch, or a shorter card floats instead of filling */
+div[data-testid="stColumn"] > div:has(.card){height:100%}
 
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
