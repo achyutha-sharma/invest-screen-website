@@ -213,18 +213,176 @@ def build(name: str, eps=None, pe=None, margin=None, price=None, shares=None,
         "fragile one — it can reverse without the company doing anything at all.",
     ))
 
+    if pe and margin is not None:
+        qs.append(Question(
+            "A company's profits fall but its share price does not move. What "
+            "happens to its P/E?",
+            [
+                "It rises, because the same price now buys less profit",
+                "It falls, because the company is worth less",
+                "Nothing — P/E only changes when the price does",
+                "It becomes negative",
+            ],
+            0,
+            "P/E is price divided by earnings. Shrink the bottom of a fraction and the "
+            "result gets bigger. **A rising P/E is not always investors getting more "
+            "optimistic** — sometimes it is just profits falling underneath a price that "
+            "has not caught up yet.",
+        ))
+
+    if fcf is not None and net_income and fcf < net_income:
+        qs.append(Question(
+            f"{name} reported more profit than the cash it actually kept. Name one "
+            "ordinary reason that happens.",
+            [
+                "It sold on credit, so the sale counts before the money arrives",
+                "It is hiding losses",
+                "It paid too much tax",
+                "Its auditors made a mistake",
+            ],
+            0,
+            "Selling on credit, building inventory, or spending heavily on equipment all "
+            "make cash lag profit — none of them are wrongdoing. **What matters is "
+            "whether the gap closes.** A company where cash trails profit every year for "
+            "a decade is telling you something the profit line is not.",
+        ))
+
+    qs.append(Question(
+        "Two companies earn the same profit. One has no debt, the other has a lot. "
+        "Which is riskier for a shareholder?",
+        [
+            "The indebted one — lenders are paid before shareholders",
+            "The debt-free one, because it is not growing",
+            "They are identical if profits are identical",
+            "Whichever has the lower share price",
+        ],
+        0,
+        "Debt is a fixed claim that gets paid first, in good years and bad. In a bad "
+        "year, interest still has to be paid and whatever is left over is what your "
+        "share is worth. **Debt magnifies both directions** — it raises returns when "
+        "things go well and wipes them out when they do not.",
+    ))
+
+    qs.append(Question(
+        "A company buys back its own shares. What does that do to EPS?",
+        [
+            "It rises, because the same profit is split between fewer shares",
+            "It falls, because the company spent cash",
+            "Nothing — buybacks only affect the share price",
+            "It doubles",
+        ],
+        0,
+        "Fewer shares means each remaining one owns a bigger slice of the same profit. "
+        "**This is why EPS can rise while total profit is flat or falling** — worth "
+        "checking both, because a company can flatter its EPS without the business "
+        "improving at all.",
+    ))
+
+    if margin is not None:
+        qs.append(Question(
+            "A supermarket has a 2% net margin and a software company has 25%. "
+            "Which is the better business?",
+            [
+                "Cannot tell — they make money in completely different ways",
+                "The software company, clearly",
+                "The supermarket, because it sells more",
+                "Whichever has the higher share price",
+            ],
+            0,
+            "A supermarket keeps very little of each sale but sells enormous volume and "
+            "turns its stock over constantly. Software keeps most of each sale but sells "
+            "far less. **Margins are only comparable within an industry** — which is why "
+            "this tool compares a company against its own past rather than a fixed "
+            "threshold.",
+        ))
+
+    qs.append(Question(
+        "Where does the money go when you buy a share on the stock exchange?",
+        [
+            "To another investor who is selling",
+            "To the company",
+            "To the government as tax",
+            "It is split between the company and the seller",
+        ],
+        0,
+        "The company only received money when it first issued those shares. Everything "
+        "since is investors trading with each other. **Buying Nike shares does not fund "
+        "Nike** — though a higher share price does make it cheaper for the company to "
+        "raise money later.",
+    ))
+
+    if dividend_yield:
+        qs.append(Question(
+            "A company cuts its dividend. Why do investors usually react badly?",
+            [
+                "It suggests management no longer expects to afford it",
+                "It is illegal to cut a dividend",
+                "It always means the company is about to fail",
+                "Because the share price is fixed to the dividend",
+            ],
+            0,
+            "Companies work hard to avoid cutting, because doing so admits something has "
+            "changed. **The cut itself is rarely the problem — it is what the cut "
+            "implies** about the cash the company expects to have.",
+        ))
+
+    qs.append(Question(
+        "Which of these is a fact rather than an opinion?",
+        [
+            "The cash that moved in and out of the bank last year",
+            "The company's reported profit",
+            "The value of its brand",
+            "Its share price target",
+        ],
+        0,
+        "Profit involves judgement about *when* to count a sale and how fast to write "
+        "assets down. Cash either moved or it did not. **That is why free cash flow is "
+        "the number to check when profit looks too good** — it has far less room for "
+        "interpretation.",
+    ))
+
+    qs.append(Question(
+        "What does a filing's risk factors section actually tell you?",
+        [
+            "What the company itself thinks could hurt it",
+            "What is definitely about to go wrong",
+            "What analysts predict",
+            "Nothing — it is pure legal boilerplate",
+        ],
+        0,
+        "It is the company's own list, written by its lawyers, so it names everything "
+        "imaginable. **Listed does not mean happening.** What is worth noticing is a "
+        "risk that is newly added, since something changed enough to write it down.",
+    ))
+
     return qs
 
 
-def pick(pool: list[Question], round_no: int = 0, count: int = 5) -> list[Question]:
-    """A different five each round, with the options reordered.
+def new_seed() -> int:
+    """A fresh seed for a new round of questions."""
+    return random.randrange(1_000_000_000)
 
-    Seeded on the round rather than left to chance, so a rerun of the same
-    round shows the same questions -- Streamlit re-executes the script on every
-    interaction, and a fresh sample each time would shuffle mid-answer.
+
+def pick(pool: list[Question], seed: int = 0, count: int = 5,
+         exclude: set[str] | None = None) -> list[Question]:
+    """Five questions, drawn at random and with their options reordered.
+
+    The seed is held by the caller rather than generated here. Streamlit
+    re-executes the whole script on every interaction, so drawing afresh each
+    time would reshuffle the options underneath someone mid-answer. A new seed
+    is minted only when the reader asks for another round.
+
+    `exclude` holds the prompts already seen, so a second round draws from what
+    is left before it starts repeating.
     """
-    rng = random.Random(round_no * 7919 + len(pool))
-    chosen = rng.sample(pool, min(count, len(pool)))
+    rng = random.Random(seed)
+    seen = exclude or set()
+    fresh = [q for q in pool if q.prompt not in seen]
+    if len(fresh) < count:
+        # Everything has been asked; start again from the whole pool rather
+        # than showing fewer questions.
+        fresh = list(pool)
+    chosen = rng.sample(fresh, min(count, len(fresh)))
     return [q.shuffled(rng) for q in chosen]
 
 
