@@ -167,12 +167,16 @@ def extract_mda(text: str, limit: int = 4) -> tuple[list[str], str]:
         if re.search(r"item\s*[27]\b|management|discussion", first, re.I) and len(rest) > 400:
             span = rest
 
-    out = []
+    out: list[str] = []
+    shapes: set[str] = set()
     for raw in re.split(r"(?<=[.!?])\s+", span):
         s = " ".join(raw.split())
-        # A section heading carries no full stop, so it fuses onto the
-        # sentence after it. When a capitalised word follows a lowercase one
-        # near the front, that is where the real sentence begins.
+
+        # A segment table puts the region in its own cell and again in the
+        # sentence, so flattening the HTML doubles it: "Europe Europe net
+        # sales increased...". Drop the leading repeat.
+        s = re.sub(r"^([A-Z][\w &-]{2,28}?)\s+\1\b", r"\1", s)
+
         if not (60 <= len(s) <= 320):
             continue
         if not (_CAUSE.search(s) and _MOVEMENT.search(s)):
@@ -182,6 +186,19 @@ def extract_mda(text: str, limit: int = 4) -> tuple[list[str], str]:
             continue
         if sum(c.isdigit() for c in s) > len(s) * 0.30:
             continue
+        # Segment discussions repeat one sentence per region, changing only
+        # the place and product names. Reducing a sentence to its first few
+        # ordinary words catches those, while leaving genuinely different
+        # explanations -- which diverge early -- intact.
+        # Match on the original casing so proper nouns are skipped entirely --
+        # lowercasing first would make "europe" and "japan" look different when
+        # the sentences around them are identical.
+        words = re.findall(r"\b[a-z]{3,}\b", s)[:6]
+        skeleton = " ".join(words)
+        if skeleton and skeleton in shapes:
+            continue
+        shapes.add(skeleton)
+
         out.append(s)
         if len(out) >= limit:
             break
