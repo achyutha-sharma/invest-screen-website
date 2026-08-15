@@ -28,16 +28,6 @@ D = "&#36;"          # for markdown, where Streamlit reads bare $ as LaTeX
 DH = "$"            # plain markdown only; HTML blocks must use D
 
 
-def go_home():
-    """Clear every page and selection, and return to the search screen."""
-    for k in ("cik", "ticker", "name", "fund", "step", "searched",
-              "quiz", "quiz_round", "mode", "peer_edit"):
-        st.session_state.pop(k, None)
-    for k in [k for k in st.session_state if k.startswith(("quiz_", "gl_", "hit_"))]:
-        st.session_state.pop(k, None)
-    st.rerun()
-
-
 
 # --------------------------------------------------------------------------
 # Look
@@ -604,12 +594,9 @@ div[data-testid="stExpander"] summary{color:var(--text) !important}
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown('<span class="masthome"></span>', unsafe_allow_html=True)
-badge, word = st.columns([1, 9])
-badge.markdown('<span class="logo">IS</span>', unsafe_allow_html=True)
-if word.button("InvestScreen", key="home_logo"):
-    go_home()
-st.markdown('<div class="mastline"></div>', unsafe_allow_html=True)
+st.markdown('<div class="mast"><span class="logo">IS</span>'
+            '<span class="mark">Invest<span>Screen</span></span></div>',
+            unsafe_allow_html=True)
 
 def secret(name: str, default: str = "") -> str:
     """Read a secret from either source.
