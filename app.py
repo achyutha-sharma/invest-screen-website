@@ -457,6 +457,47 @@ div[data-testid="stColumn"]:has(.logo){flex:0 0 auto !important;width:auto !impo
   min-width:44px !important}
 .masthome ~ div [data-testid="stColumn"] .stButton button{margin-top:.15rem}
 
+
+/* ---------------- mobile ---------------- */
+@media (max-width:640px){
+  .block-container{padding-top:5rem !important;padding-left:.9rem;padding-right:.9rem}
+
+  /* headline strip: two per row, and the glossary links stay attached */
+  .five{grid-template-columns:repeat(2,1fr) !important}
+  .fv{padding:.7rem .75rem}
+  .fv .v{font-size:1.12rem}
+  .fv .d{font-size:.66rem}
+
+  /* Streamlit stacks columns on narrow screens, which detaches the glossary
+     links from their boxes. Two per row keeps them beside what they explain. */
+  div[data-testid="stHorizontalBlock"]{flex-wrap:wrap !important;gap:1px !important}
+  div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]{
+    flex:0 0 calc(50% - .5px) !important;min-width:0 !important;width:auto !important}
+
+  /* three-year table: fewer columns rather than sideways scroll */
+  .years td.mname i{display:none}
+  .years td.mname{min-width:0;max-width:9rem}
+  .years td.mname b{font-size:.8rem}
+  .years td,.years th{padding:.5rem .35rem;font-size:.78rem}
+  .years th:nth-child(2),.years td:nth-child(2){display:none}   /* oldest year */
+  .years td.tcol{min-width:0}
+
+  h2.co{font-size:1.35rem}
+  .hero{font-size:1.5rem}
+  .qrow{grid-template-columns:1fr 1fr}
+  .movegrid{grid-template-columns:1fr}
+  .gl{padding:.85rem .9rem}
+  .gl p{font-size:.85rem}
+  .sect{margin-top:1.6rem}
+}
+
+/* the mode toggle: hide the radio circle on every screen size, not just wide */
+div[role="radiogroup"] > label > div:first-child,
+div[role="radiogroup"] input[type="radio"],
+div[role="radiogroup"] [data-testid="stWidgetLabel"] + div > div:first-child{
+  display:none !important}
+div[role="radiogroup"] > label{border-radius:6px !important}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -1219,7 +1260,7 @@ if any(x[4] for x in strip):
         if not g:
             col.markdown('<div class="nolink"></div>', unsafe_allow_html=True)
             continue
-        if col.button("what is this? →", key=f"gl_{g}", use_container_width=True):
+        if col.button("what is this?", key=f"gl_{g}", use_container_width=True):
             # The radio owns st.session_state["mode"], so it cannot be written
             # here. Set a flag the radio's index reads on the next run.
             st.session_state["goto_teach"] = True
