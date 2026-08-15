@@ -38,12 +38,6 @@ def go_home():
     st.rerun()
 
 
-def home_button(key: str):
-    """A home link at the top of a page. Placed before the content rather than
-    after it, so it is reachable without scrolling to the bottom."""
-    if st.button("← Home", key=key):
-        go_home()
-
 
 # --------------------------------------------------------------------------
 # Look
@@ -842,8 +836,6 @@ if st.session_state.get("fund"):
 
     fq = quote(fd.ticker)
 
-    home_button("home_fund")
-
     day_badge = ""
     if fq.available and fq.day_change_pct is not None:
         tone = "good" if fq.day_change_pct >= 0 else "weak"
@@ -1307,7 +1299,6 @@ if mode == "Teach me":
     st.markdown('<p class="disc">Every figure comes from filings made to the U.S. Securities '
                 "and Exchange Commission. Educational only — not advice to buy or sell "
                 "anything.</p>", unsafe_allow_html=True)
-    home_button("home_teach")
     st.stop()
 
 strip = [
@@ -1336,24 +1327,17 @@ rows = [strip[i:i + 2] for i in range(0, len(strip), 2)]
 for row in rows:
     cols = st.columns(len(row))
     for col, (k, v, tone, d, g) in zip(cols, row):
-        # Labels are markdown: the HTML entity would print literally, and a
-        # bare pair of dollar signs would be read as LaTeX. Escaping is the
-        # only form that survives both.
-        def md(t):
-            return str(t).replace("&#36;", "\\$").replace("$", "\\$").replace("\\\\$", "\\$")
+        col.markdown(f'<div class="card"><span class="ck">{E(k)}</span>'
+                     f'<span class="cv {tone}">{v}</span>'
+                     f'<span class="cd">{d}</span></div>', unsafe_allow_html=True)
 
-        label = f"**{k.upper()}**  \n### {md(v)}  \n{md(d)}"
-        if g:
-            col.button(label + "  \n*what is this? →*", key=f"card_{g}",
-                       use_container_width=True)
-            if st.session_state.get(f"card_{g}"):
-                st.session_state["goto_teach"] = True
-                st.session_state["step"] = 1
-                st.rerun()
-        else:
-            col.markdown(f'<div class="card"><span class="ck">{E(k)}</span>'
-                         f'<span class="cv {tone}">{v}</span>'
-                         f'<span class="cd">{d}</span></div>', unsafe_allow_html=True)
+# One link rather than one per card. Five separate controls stacked into a
+# detached list on a phone, and they all led to the same place anyway.
+if st.button("What do these numbers mean? →", key="gloss_all",
+             use_container_width=True):
+    st.session_state["goto_teach"] = True
+    st.session_state["step"] = 1
+    st.rerun()
 
 # --------------------------------------------------------------------------
 # 01 the numbers
@@ -1673,5 +1657,3 @@ if eq.notes:
 st.markdown('<p class="disc">Figures come from SEC filings. Share price and today\'s '
             "move come from a market feed. Educational research only — not advice.</p>",
             unsafe_allow_html=True)
-
-home_button("home_bottom")
