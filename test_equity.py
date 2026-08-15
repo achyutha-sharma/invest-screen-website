@@ -4,6 +4,8 @@ Offline checks for the equity layer. No network needed.
 Run:  python3 test_equity.py
 """
 
+import re
+
 from sec_equity import (
     FIELDS,
     Equity,
@@ -587,6 +589,51 @@ def test_quarter_year_ago():
     print("quarter year-ago ok")
 
 
+
+
+def test_mda_dedupes_segments():
+    """Segment discussions repeat one sentence per region.
+
+    Apple's filing says the same thing about Europe, Japan and Asia Pacific,
+    changing only the place name. Quoting all of them fills the panel with one
+    idea; the parser must keep one and move on to a different explanation.
+    """
+    from filing_text import extract_mda, to_text
+
+    html = ("<html><body><p>Item 7. Management's Discussion and Analysis</p>"
+            "<p>Total net sales increased 6% during 2025, primarily due to higher "
+            "net sales of Services.</p>"
+            "<table><tr><td>Europe</td></tr></table>"
+            "<p>Europe net sales increased during 2025 compared to 2024 primarily "
+            "due to higher net sales of Services, iPhone and Mac.</p>"
+            "<table><tr><td>Japan</td></tr></table>"
+            "<p>Japan net sales increased during 2025 compared to 2024 primarily "
+            "due to higher net sales of iPhone, Services and iPad.</p>"
+            "<table><tr><td>Rest of Asia Pacific</td></tr></table>"
+            "<p>Rest of Asia Pacific net sales increased during 2025 compared to "
+            "2024 primarily due to higher net sales of iPhone and Mac.</p>"
+            "<p>Gross margin percentage increased during 2025 primarily due to a "
+            "favourable shift in mix towards Services.</p>"
+            + "<p>filler sentence for length. </p>" * 60
+            + "<p>Item 7A. Quantitative and Qualitative Disclosures</p></body></html>")
+
+    quotes, why = extract_mda(to_text(html))
+    assert not why, why
+
+    # The doubled label from the table cell must be gone.
+    for q in quotes:
+        assert not re.match(r"^(\w[\w ]*?) \1\b", q), q
+        assert "Europe Europe" not in q and "Japan Japan" not in q
+
+    # Only one of the three near-identical segment sentences survives.
+    segmenty = [q for q in quotes if "net sales increased during 2025 compared" in q]
+    assert len(segmenty) <= 1, segmenty
+
+    # And the space it frees is used on a different explanation.
+    assert any("Gross margin" in q for q in quotes), quotes
+    print("mda segment dedupe ok")
+
+
 def main():
     test_clean()
     test_valuation()
@@ -599,6 +646,7 @@ def main():
     test_risk_junk_rejected()
     test_span_picks_real_section()
     test_quarter_year_ago()
+    test_mda_dedupes_segments()
     print("\nAll checks passed.")
 
 
