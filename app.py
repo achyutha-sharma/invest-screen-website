@@ -27,6 +27,24 @@ E = html.escape
 D = "&#36;"          # for markdown, where Streamlit reads bare $ as LaTeX
 DH = "$"            # plain markdown only; HTML blocks must use D
 
+
+def go_home():
+    """Clear every page and selection, and return to the search screen."""
+    for k in ("cik", "ticker", "name", "fund", "step", "searched",
+              "quiz", "quiz_round", "mode", "peer_edit"):
+        st.session_state.pop(k, None)
+    for k in [k for k in st.session_state if k.startswith(("quiz_", "gl_", "hit_"))]:
+        st.session_state.pop(k, None)
+    st.rerun()
+
+
+def home_button(key: str):
+    """A home link at the top of a page. Placed before the content rather than
+    after it, so it is reachable without scrolling to the bottom."""
+    if st.button("← Home", key=key):
+        go_home()
+
+
 # --------------------------------------------------------------------------
 # Look
 # --------------------------------------------------------------------------
@@ -463,24 +481,33 @@ div[data-testid="stColumn"]:has(.logo){flex:0 0 auto !important;width:auto !impo
   .block-container{padding-top:5rem !important;padding-left:.9rem;padding-right:.9rem}
 
   /* headline strip: two per row, and the glossary links stay attached */
-  .five{grid-template-columns:repeat(2,1fr) !important}
   .fv{padding:.7rem .75rem}
   .fv .v{font-size:1.12rem}
   .fv .d{font-size:.66rem}
 
   /* Streamlit stacks columns on narrow screens, which detaches the glossary
      links from their boxes. Two per row keeps them beside what they explain. */
-  div[data-testid="stHorizontalBlock"]{flex-wrap:wrap !important;gap:1px !important}
+  /* Streamlit stacks columns below 640px, which would put one card per row.
+     Forcing two keeps the strip compact and the labels attached. */
+  div[data-testid="stHorizontalBlock"]{flex-wrap:nowrap !important;gap:.5rem !important}
   div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]{
-    flex:0 0 calc(50% - .5px) !important;min-width:0 !important;width:auto !important}
+    flex:1 1 0 !important;min-width:0 !important;width:auto !important}
+  div[data-testid="stHorizontalBlock"] .stButton button{
+    min-height:6.4rem;padding:.6rem .65rem}
+  div[data-testid="stHorizontalBlock"] .stButton button h3{font-size:1.05rem !important}
+  div[data-testid="stHorizontalBlock"] .stButton button p{font-size:.54rem}
 
-  /* three-year table: fewer columns rather than sideways scroll */
+  /* three-year table: drop the oldest year and the hints, and keep the
+     measure name pinned so a scrolled row still says what it is */
   .years td.mname i{display:none}
-  .years td.mname{min-width:0;max-width:9rem}
-  .years td.mname b{font-size:.8rem}
-  .years td,.years th{padding:.5rem .35rem;font-size:.78rem}
-  .years th:nth-child(2),.years td:nth-child(2){display:none}   /* oldest year */
+  .years td.mname b{font-size:.79rem;white-space:normal}
+  .years td,.years th{padding:.5rem .4rem;font-size:.79rem}
+  .years th:nth-child(2),.years td:nth-child(2){display:none}
+  .years td.mname,.years th:first-child{position:sticky;left:0;z-index:2;
+    background:var(--surf);min-width:6.5rem;max-width:6.5rem}
+  .years tbody tr:hover td.mname{background:var(--surf)}
   .years td.tcol{min-width:0}
+  .panel:has(.years){padding:.6rem .5rem;overflow-x:auto}
 
   h2.co{font-size:1.35rem}
   .hero{font-size:1.5rem}
@@ -497,6 +524,45 @@ div[role="radiogroup"] input[type="radio"],
 div[role="radiogroup"] [data-testid="stWidgetLabel"] + div > div:first-child{
   display:none !important}
 div[role="radiogroup"] > label{border-radius:6px !important}
+
+
+/* ---- headline cards: each is a button, so the label carries the card ---- */
+div[data-testid="stHorizontalBlock"]:has(button[data-testid*="card"]) .stButton button,
+.stButton button[kind="secondary"]:has(+ *) {}
+
+div[data-testid="stVerticalBlock"] .stButton button[aria-label*="SCORE"],
+.cardrow .stButton button{}
+
+/* target the metric buttons by their generated key class */
+button[data-testid^="stBaseButton"]{}
+
+.card{background:var(--surf);border:1px solid var(--line);border-radius:10px;
+  padding:.85rem .95rem;display:block;height:100%}
+.card .ck{display:block;font-size:.58rem;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--text-3);font-weight:700;margin-bottom:.3rem;line-height:1.3}
+.card .cv{display:block;font-family:var(--mono);font-size:1.28rem;font-weight:700;
+  letter-spacing:-.025em;color:#FFFFFF}
+.card .cv.good{color:var(--up)} .card .cv.watch{color:var(--warn)} .card .cv.weak{color:var(--down)}
+.card .cd{display:block;font-size:.7rem;color:var(--text-2);margin-top:.35rem;line-height:1.45}
+
+
+/* metric cards: buttons dressed as panels, so the whole card is clickable */
+div[data-testid="stHorizontalBlock"] .stButton button{
+  background:var(--surf);border:1px solid var(--line);border-radius:10px;
+  padding:.85rem .95rem;text-align:left;justify-content:flex-start;
+  align-items:flex-start;min-height:7.2rem;height:100%;white-space:normal}
+div[data-testid="stHorizontalBlock"] .stButton button:hover{
+  border-color:var(--acc);background:var(--surf-2)}
+div[data-testid="stHorizontalBlock"] .stButton button p{
+  text-align:left;font-size:.58rem;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--text-3);font-weight:700;line-height:1.3;margin:0}
+div[data-testid="stHorizontalBlock"] .stButton button h3{
+  font-family:var(--mono) !important;font-size:1.28rem !important;font-weight:700 !important;
+  color:#FFFFFF !important;letter-spacing:-.025em;margin:.25rem 0 .2rem !important;
+  padding:0 !important;text-align:left}
+div[data-testid="stHorizontalBlock"] .stButton button em{
+  color:var(--acc-2);font-size:.6rem;font-style:normal;font-weight:700;
+  text-transform:lowercase;letter-spacing:.02em}
 
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
@@ -521,23 +587,6 @@ badge.markdown('<span class="logo">IS</span>', unsafe_allow_html=True)
 if word.button("InvestScreen", key="home_logo"):
     go_home()
 st.markdown('<div class="mastline"></div>', unsafe_allow_html=True)
-
-def go_home():
-    """Clear every page and selection, and return to the search screen."""
-    for k in ("cik", "ticker", "name", "fund", "step", "searched",
-              "quiz", "quiz_round", "mode", "peer_edit"):
-        st.session_state.pop(k, None)
-    for k in [k for k in st.session_state if k.startswith(("quiz_", "gl_", "hit_"))]:
-        st.session_state.pop(k, None)
-    st.rerun()
-
-
-def home_button(key: str):
-    """A home link at the top of a page. Placed before the content rather than
-    after it, so it is reachable without scrolling to the bottom."""
-    if st.button("← Home", key=key):
-        go_home()
-
 
 def secret(name: str, default: str = "") -> str:
     """Read a secret from either source.
@@ -1250,23 +1299,32 @@ strip = [
      "good" if margin and margin > 15 else "watch" if margin and margin > 7 else "weak",
      "net profit margin — kept from every " + D + "100 of sales", "margin"),
 ]
-st.markdown('<div class="five">' + "".join(
-    f'<div class="fv"><span class="k">{E(k)}</span>'
-    f'<span class="v {t}">{v}</span><span class="d">{d}</span>'
-    + "</div>" for k, v, t, d, g in strip) + "</div>", unsafe_allow_html=True)
+# Each box is a button carrying its whole label, so the entire card is
+# clickable and the glossary link cannot drift away from it on a narrow
+# screen. Streamlit cannot make an HTML block clickable, so the card has to be
+# the button rather than sit beside one.
+rows = [strip[i:i + 2] for i in range(0, len(strip), 2)]
+for row in rows:
+    cols = st.columns(len(row))
+    for col, (k, v, tone, d, g) in zip(cols, row):
+        # Labels are markdown: the HTML entity would print literally, and a
+        # bare pair of dollar signs would be read as LaTeX. Escaping is the
+        # only form that survives both.
+        def md(t):
+            return str(t).replace("&#36;", "\\$").replace("$", "\\$").replace("\\\\$", "\\$")
 
-if any(x[4] for x in strip):
-    cols = st.columns(len(strip))
-    for col, (k, _, _, _, g) in zip(cols, strip):
-        if not g:
-            col.markdown('<div class="nolink"></div>', unsafe_allow_html=True)
-            continue
-        if col.button("what is this?", key=f"gl_{g}", use_container_width=True):
-            # The radio owns st.session_state["mode"], so it cannot be written
-            # here. Set a flag the radio's index reads on the next run.
-            st.session_state["goto_teach"] = True
-            st.session_state["step"] = 1
-            st.rerun()
+        label = f"**{k.upper()}**  \n### {md(v)}  \n{md(d)}"
+        if g:
+            col.button(label + "  \n*what is this? →*", key=f"card_{g}",
+                       use_container_width=True)
+            if st.session_state.get(f"card_{g}"):
+                st.session_state["goto_teach"] = True
+                st.session_state["step"] = 1
+                st.rerun()
+        else:
+            col.markdown(f'<div class="card"><span class="ck">{E(k)}</span>'
+                         f'<span class="cv {tone}">{v}</span>'
+                         f'<span class="cd">{d}</span></div>', unsafe_allow_html=True)
 
 # --------------------------------------------------------------------------
 # 01 the numbers
