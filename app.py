@@ -668,9 +668,9 @@ query = st.text_input("Company name or ticker", placeholder="Search").strip()
 
 # Ticker, label, and what it tracks. Funds, so no research page exists.
 MARKET = [
-    ("SPY", "S&P 500", "500 large US companies"),
-    ("QQQ", "Nasdaq 100", "the largest non-financial tech names"),
-    ("GLD", "Gold", "bullion held in a vault"),
+    ("SPY", "S&P 500 ETF", "the fund tracking 500 large US companies"),
+    ("QQQ", "Nasdaq 100 ETF", "the fund tracking the largest tech names"),
+    ("GLD", "Gold ETF", "the fund holding physical gold"),
 ]
 
 
@@ -699,10 +699,10 @@ if "cik" not in st.session_state and not query and prices.configured:
                 for k in ("cik", "ticker", "name", "step"):
                     st.session_state.pop(k, None)
                 st.rerun()
-        st.caption("Funds tracking whole markets. They hold shares in hundreds of "
-                   "companies rather than running a business, so there is no filing to "
-                   "research — but they tell you whether a stock moved on its own news or "
-                   "with everything else.")
+        st.caption("Prices are delayed by roughly 15 minutes. These are the funds that "
+                   "track each market, not the index itself — an index is a number, a "
+                   "fund is something you can buy, so the two are close but never "
+                   "identical.")
 
 # A query that has already been acted on must not re-trigger. Streamlit reruns
 # the whole script on every interaction, and the search box keeps its text, so
@@ -785,7 +785,8 @@ if st.session_state.get("fund"):
                     f'<div class="fv"><span class="k">Today</span>'
                     f'<span class="v {"good" if (fq.day_change_pct or 0) >= 0 else "weak"}">'
                     + (f'{fq.day_change_pct:+,.2f}%' if fq.day_change_pct is not None else "—")
-                    + f'</span><span class="d">as of {E(fq.as_of)}</span></div></div>',
+                    + f'</span><span class="d">{E(fq.as_of)}, delayed ~15 min</span>'
+                    "</div></div>",
                     unsafe_allow_html=True)
 
     sh("What this actually is")
@@ -1235,7 +1236,7 @@ strip = [
     ("Score", f"{card.stars:.1f}/5", card.tone, "see the scorecard below", None),
     ("Share price", f"{D}{q.price:,.2f}" if q.available else "no feed",
      "" if q.available else "dim",
-     f"as of {q.as_of}" if q.as_of else (q.problem or "price unavailable"), "price"),
+     f"{q.as_of}, delayed" if q.as_of else (q.problem or "price unavailable"), "price"),
     ("EPS", f"{D}{eps:,.2f}" if eps is not None else "—", "",
      "earnings per share — profit split per share", "eps"),
     ("P/E ratio", f"{pe:,.2f}×" if pe else ("n/m" if q.available else "needs price"),
