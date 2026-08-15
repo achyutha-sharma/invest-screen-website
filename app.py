@@ -16,7 +16,8 @@ import streamlit as st
 from filing_text import latest_filings, read_filing
 import funds as funds_data
 from prices import PriceClient
-from quiz import build as quiz_build, grade as quiz_grade, pick as quiz_pick
+from quiz import (build as quiz_build, grade as quiz_grade, new_seed,
+                  pick as quiz_pick)
 from scorecard import score
 from sec_equity import extract_equity, pe_history, value
 from sec_ratios import SecClient
@@ -827,7 +828,7 @@ if query:
         if box.button(f"{h['ticker']}  ·  {h['name'].title()}",
                       key=f"hit_{h['cik']}", use_container_width=True):
             st.session_state.pop("fund", None)
-            for k in ("step", "quiz", "quiz_round"):
+            for k in ("step", "quiz", "quiz_round", "quiz_seed", "quiz_seen"):
                 st.session_state.pop(k, None)
             st.session_state["cik"] = h["cik"]
             st.session_state["ticker"] = h["ticker"]
@@ -1189,8 +1190,13 @@ def quiz_slide(eq, latest, val, quote_):
         revenue_growth=None, income_growth=None,
     )
 
+    # The seed is held in session state so the options do not reshuffle while
+    # someone is part-way through answering.
+    if "quiz_seed" not in st.session_state:
+        st.session_state["quiz_seed"] = new_seed()
     rnd = st.session_state.get("quiz_round", 0)
-    qs = quiz_pick(qs, rnd) if qs else []
+    seen = set(st.session_state.get("quiz_seen", []))
+    qs = quiz_pick(qs, st.session_state["quiz_seed"], exclude=seen) if qs else []
 
     if qs:
         answers = st.session_state.setdefault("quiz", {})
@@ -1225,13 +1231,17 @@ def quiz_slide(eq, latest, val, quote_):
                         f'<p class="bigsub"><b>{E(verdict)}.</b> {E(note)}</p></div>',
                         unsafe_allow_html=True)
             if st.button("Try five more", key="quiz_reset"):
-                # Clearing the widget keys deselects the radios; bumping the
-                # round draws a different five with the options reordered.
+                # Clearing the widget keys deselects the radios. A new seed
+                # draws a different five, and recording what has been asked
+                # keeps the next round from repeating them.
                 for k in list(st.session_state):
                     if k.startswith("quiz_q"):
                         st.session_state.pop(k, None)
                 st.session_state["quiz"] = {}
                 st.session_state["quiz_round"] = rnd + 1
+                st.session_state["quiz_seed"] = new_seed()
+                st.session_state["quiz_seen"] = list(
+                    seen | {q.prompt for q in qs})
                 st.rerun()
         else:
             st.caption(f"{len(done)} of {len(qs)} answered.")
