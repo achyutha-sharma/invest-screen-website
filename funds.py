@@ -32,8 +32,8 @@ class Fund:
 FUNDS: dict[str, Fund] = {
     "SPY": Fund(
         ticker="SPY",
-        name="S&P 500",
-        one_line="500 large US companies, in one holding",
+        name="S&P 500 ETF",
+        one_line="a fund holding all 500, in one share",
         what=(
             "A fund that owns shares in the 500 biggest companies listed in America — "
             "Apple, JPMorgan, Exxon, Walmart and so on. Buying one share makes you a "
@@ -66,8 +66,8 @@ FUNDS: dict[str, Fund] = {
     ),
     "QQQ": Fund(
         ticker="QQQ",
-        name="Nasdaq 100",
-        one_line="the 100 largest non-financial companies on the Nasdaq",
+        name="Nasdaq 100 ETF",
+        one_line="a fund holding the 100 largest Nasdaq companies",
         what=(
             "A fund holding the 100 biggest companies on the Nasdaq exchange, excluding "
             "banks and insurers. In practice that makes it heavily weighted towards "
@@ -98,8 +98,8 @@ FUNDS: dict[str, Fund] = {
     ),
     "GLD": Fund(
         ticker="GLD",
-        name="Gold",
-        one_line="physical gold bars held in a vault",
+        name="Gold ETF",
+        one_line="a fund holding physical gold bars in a vault",
         what=(
             "A fund that holds actual gold bars, stored in a vault in London. Your share "
             "is a claim on a slice of that metal. There is no company here — no revenue, "
