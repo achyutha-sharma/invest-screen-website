@@ -634,6 +634,12 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 .readout p:last-child{margin-bottom:0}
 .readout b{color:#FFFFFF;font-weight:700}
 
+
+/* the inline five-year line */
+.spark{display:block;width:100%;height:30px;margin:.4rem 0 .1rem;overflow:visible}
+.mk .spark{height:26px;margin:.35rem 0 .15rem}
+.card .spark{margin:.35rem 0 .2rem}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -654,6 +660,42 @@ div[data-testid="stExpander"] summary{color:var(--text) !important}
 st.markdown('<div class="mast"><span class="logo">IS</span>'
             '<span class="mark">Invest<span>Screen</span></span></div>',
             unsafe_allow_html=True)
+
+def sparkline(hist, months: int = 60, w: int = 120, h: int = 34) -> str:
+    """A five-year price line, small enough to sit beside a number.
+
+    No axes and no labels -- at this size they would be unreadable, and the
+    shape is the whole point. The exact figures are stated next to it anyway.
+    Returns an empty string when there is too little history to draw, so the
+    caller can simply concatenate it.
+    """
+    vals = [v for _, v in hist][-months:]
+    if len(vals) < 12:
+        return ""
+    lo, hi = min(vals), max(vals)
+    span = (hi - lo) or 1
+    pad = 3
+
+    def X(i):
+        return pad + (i / max(len(vals) - 1, 1)) * (w - 2 * pad)
+
+    def Y(v):
+        return pad + (1 - (v - lo) / span) * (h - 2 * pad)
+
+    line = " ".join(f"{'L' if i else 'M'}{X(i):.1f},{Y(v):.1f}"
+                    for i, v in enumerate(vals))
+    rising = vals[-1] >= vals[0]
+    colour = "#5FD69B" if rising else "#FF7B8A"
+    fill = "rgba(95,214,155,.13)" if rising else "rgba(255,123,138,.13)"
+    area = f"M{X(0):.1f},{h - pad:.1f} " + line[1:] + f" L{X(len(vals) - 1):.1f},{h - pad:.1f} Z"
+    return (f'<svg class="spark" viewBox="0 0 {w} {h}" preserveAspectRatio="none" '
+            f'role="img" aria-label="five-year price trend">'
+            f'<path d="{area}" fill="{fill}"/>'
+            f'<path d="{line}" fill="none" stroke="{colour}" stroke-width="1.8" '
+            'stroke-linejoin="round" stroke-linecap="round"/>'
+            f'<circle cx="{X(len(vals) - 1):.1f}" cy="{Y(vals[-1]):.1f}" r="2.4" '
+            f'fill="{colour}"/></svg>')
+
 
 def price_chart(hist, label=""):
     """Month-end closes over time.
@@ -859,18 +901,20 @@ if "cik" not in st.session_state and not query and prices.configured:
         except Exception:
             continue
         if qt.available and qt.day_change_pct is not None:
-            mkt.append((tk, label, what, qt.day_change_pct))
+            spark = sparkline(prices.monthly(tk)) if prices.has_history else ""
+            mkt.append((tk, label, what, qt.day_change_pct, spark))
     if mkt:
         st.markdown('<p class="picker">The market today</p>'
                     + '<div class="mkt">' + "".join(
                         f'<div class="mk"><span class="ml">{E(l)}</span>'
                         f'<span class="mv2 {"up" if p >= 0 else "down"}">'
                         f'{"▲" if p >= 0 else "▼"} {abs(p):.2f}%</span>'
-                        f'<span class="mw">{E(w)}</span></div>'
-                        for _, l, w, p in mkt) + "</div>", unsafe_allow_html=True)
+                        + sp
+                        + f'<span class="mw">{E(w)}</span></div>'
+                        for _, l, w, p, sp in mkt) + "</div>", unsafe_allow_html=True)
         st.markdown('<span class="mktlinks"></span>', unsafe_allow_html=True)
         cols = st.columns(len(mkt))
-        for col, (tk, label, _, _) in zip(cols, mkt):
+        for col, (tk, label, _, _, _) in zip(cols, mkt):
             if col.button(f"what is {label}? →", key=f"fund_{tk}",
                           use_container_width=True):
                 st.session_state["fund"] = tk
@@ -954,6 +998,44 @@ if st.session_state.get("fund"):
                 "statements, so there are no ratios here — a fund has no revenue or "
                 "profit of its own. Prices come from a market feed. Educational only.</p>",
                 unsafe_allow_html=True)
+    st.stop()
+
+# A query already acted on must not re-trigger: Streamlit reruns the whole
+# script on every interaction and the search box keeps its text, so without
+# this any click on an open page would bounce back to the results.
+if query and query == st.session_state.get("searched"):
+    query = ""
+
+if query:
+    try:
+        hits = search(query)
+    except Exception as e:
+        st.error(f"Could not reach the SEC: {e}")
+        st.stop()
+    if not hits:
+        st.warning(f"Nothing matches \u201c{query}\u201d. Only US companies that file with "
+                   "the SEC are covered — try a shorter name, or the ticker.")
+        st.stop()
+
+    # A list rather than a dropdown, and never auto-selected. The exact ticker
+    # a reader wants is often not the first hit -- "delta" reaches an airline
+    # and an apparel maker -- so showing the alternatives costs one click and
+    # saves guessing the precise name.
+    st.markdown(f'<p class="picker">{len(hits)} '
+                f'{"match" if len(hits) == 1 else "matches"}</p>', unsafe_allow_html=True)
+    box = st.container()
+    box.markdown('<span class="hitrow"></span>', unsafe_allow_html=True)
+    for h in hits:
+        if box.button(f"{h['ticker']}  ·  {h['name'].title()}",
+                      key=f"hit_{h['cik']}", use_container_width=True):
+            st.session_state.pop("fund", None)
+            for k in ("step", "quiz", "quiz_round", "quiz_seed", "quiz_seen"):
+                st.session_state.pop(k, None)
+            st.session_state["cik"] = h["cik"]
+            st.session_state["ticker"] = h["ticker"]
+            st.session_state["name"] = h["name"]
+            st.session_state["searched"] = query
+            st.rerun()
     st.stop()
 
 if "cik" not in st.session_state:
@@ -1262,6 +1344,11 @@ rev = latest.get("revenue")
 ni = latest.get("net_income")
 margin = None if (ni is None or not rev) else 100 * ni / rev
 
+# A five-year line inside the share price card, so the number has context
+# without the reader scrolling to the chart below.
+px_series = prices.monthly(ticker) if prices.has_history else []
+price_spark = sparkline(px_series) if q.available else ""
+
 pe = val.pe
 dy = val.dividend_yield
 
@@ -1332,7 +1419,8 @@ if mode == "Teach me":
 
 strip = [
     ("Score", f"{card.stars:.1f}/5", card.tone, "see the scorecard below", None),
-    ("Share price", f"{D}{q.price:,.2f}" if q.available else "no feed",
+    ("Share price",
+     (f"{D}{q.price:,.2f}" if q.available else "no feed") + price_spark,
      "" if q.available else "dim",
      f"{q.as_of}, delayed" if q.as_of else (q.problem or "price unavailable"), "price"),
     ("EPS", f"{D}{eps:,.2f}" if eps is not None else "—", "",
@@ -1454,7 +1542,6 @@ if have:
 # keeping more of each sale; where it lags, costs or the share count are
 # growing faster than the business.
 
-px_series = prices.monthly(ticker) if prices.has_history else []
 if len(px_series) >= 12:
     sh("Share price", f"{px_series[0][0][:4]} to {px_series[-1][0][:4]}")
     price_chart(px_series, eq.entity)
