@@ -632,6 +632,14 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 .why .w b{display:block;font-size:.86rem;color:#FFFFFF;margin-bottom:.22rem}
 .why .w span{font-size:.81rem;color:var(--text-2);line-height:1.55}
 
+
+/* the plain-language readout under a chart */
+.readout{margin-top:.7rem}
+.readout p{margin:0 0 .35rem;font-size:.9rem;color:var(--text-2);line-height:1.6;
+  max-width:66ch}
+.readout p:last-child{margin-bottom:0}
+.readout b{color:#FFFFFF;font-weight:700}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -652,6 +660,70 @@ div[data-testid="stExpander"] summary{color:var(--text) !important}
 st.markdown('<div class="mast"><span class="logo">IS</span>'
             '<span class="mark">Invest<span>Screen</span></span></div>',
             unsafe_allow_html=True)
+
+def price_chart(hist, label=""):
+    """Month-end closes over time.
+
+    Green when the period ends higher than it started, coral when lower --
+    the only place in the app where colour describes a price rather than a
+    fundamental, and it is stated plainly beneath.
+    """
+    vals = [v for _, v in hist]
+    if len(vals) < 12:
+        return
+    W, H, L, R, T, B = 780, 210, 46, 12, 14, 26
+    lo, hi = min(vals), max(vals)
+    pad = (hi - lo) * 0.10 or 1
+    y0, y1 = lo - pad, hi + pad
+
+    def X(i):
+        return L + (i / max(len(vals) - 1, 1)) * (W - L - R)
+
+    def Y(v):
+        return T + (1 - (v - y0) / (y1 - y0)) * (H - T - B)
+
+    grid = ""
+    for g in range(4):
+        v = y0 + (y1 - y0) * g / 3
+        y = Y(v)
+        grid += (f'<line x1="{L}" y1="{y:.1f}" x2="{W - R}" y2="{y:.1f}" stroke="#332B60"/>'
+                 f'<text x="{L - 7}" y="{y + 3.5:.1f}" text-anchor="end" '
+                 'font-family="IBM Plex Mono,monospace" font-size="9" font-weight="600" '
+                 f'fill="#7F779E">{v:,.0f}</text>')
+    step = max(len(vals) // 6, 1)
+    xl = "".join(
+        f'<text x="{X(i):.1f}" y="{H - 7}" text-anchor="middle" '
+        'font-family="IBM Plex Mono,monospace" font-size="9" font-weight="600" '
+        f"fill=\"#7F779E\">&#39;{hist[i][0][2:4]}</text>"
+        for i in range(0, len(vals), step))
+    line = " ".join(f"{'L' if i else 'M'}{X(i):.1f},{Y(v):.1f}" for i, v in enumerate(vals))
+    rising = vals[-1] >= vals[0]
+    colour = "#5FD69B" if rising else "#FF7B8A"
+    fill = "rgba(95,214,155,.10)" if rising else "rgba(255,123,138,.10)"
+    area = (f"M{X(0):.1f},{Y(y0):.1f} " + line[1:] +
+            f" L{X(len(vals) - 1):.1f},{Y(y0):.1f} Z")
+
+    st.markdown(f'''<div class="panel chart">
+      <svg viewBox="0 0 {W} {H}" role="img" aria-label="{E(label)} price history">
+        {grid}
+        <path d="{area}" fill="{fill}" stroke="none"/>
+        <path d="{line}" fill="none" stroke="{colour}" stroke-width="2.4"
+          stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="{X(len(vals) - 1):.1f}" cy="{Y(vals[-1]):.1f}" r="3.8" fill="{colour}"/>
+        {xl}
+      </svg></div>''', unsafe_allow_html=True)
+
+    chg = 100 * (vals[-1] / vals[0] - 1) if vals[0] else None
+    years = max(round(len(vals) / 12), 1)
+    if chg is not None:
+        st.markdown(
+            f'<div class="readout"><p>Over about {years} years the price went from '
+            f'<b>{DH}{vals[0]:,.2f}</b> to <b>{DH}{vals[-1]:,.2f}</b> — '
+            f'<b>{"up" if chg >= 0 else "down"} {abs(chg):,.0f}%</b>.</p>'
+            "<p>Price alone does not say whether the business improved. The trend above "
+            "shows revenue and profit over the same period, which is what to compare it "
+            "against.</p></div>", unsafe_allow_html=True)
+
 
 def secret(name: str, default: str = "") -> str:
     """Read a secret from either source.
@@ -676,7 +748,8 @@ if not user_agent:
     st.stop()
 
 client = SecClient(user_agent=user_agent)
-prices = PriceClient(api_key=secret("FINNHUB_API_KEY"))
+prices = PriceClient(api_key=secret("FINNHUB_API_KEY"),
+                     history_key=secret("TIINGO_API_KEY"))
 
 
 @st.cache_data(show_spinner=False)
@@ -940,52 +1013,10 @@ if st.session_state.get("fund"):
                 + "".join(f"<p>{E(x)}</p>" for x in fd.moves_down) + "</div>"
                 + "</div>", unsafe_allow_html=True)
 
-    # Price history is not on every free plan, so the chart appears only when
-    # the data does -- and its absence is not treated as an error.
-    hist = prices.monthly(fd.ticker) if prices.configured else []
+    hist = prices.monthly(fd.ticker) if prices.has_history else []
     if len(hist) >= 12:
         sh("How it has moved", f"{hist[0][0][:4]} to {hist[-1][0][:4]}")
-        W, H, L, R, T, B = 780, 200, 44, 12, 14, 24
-        vals = [v for _, v in hist]
-        lo, hi = min(vals), max(vals)
-        pad = (hi - lo) * 0.10 or 1
-        y0, y1 = lo - pad, hi + pad
-
-        def FX(i):
-            return L + (i / max(len(vals) - 1, 1)) * (W - L - R)
-
-        def FY(v):
-            return T + (1 - (v - y0) / (y1 - y0)) * (H - T - B)
-
-        grid = ""
-        for g in range(4):
-            v = y0 + (y1 - y0) * g / 3
-            y = FY(v)
-            grid += (f'<line x1="{L}" y1="{y:.1f}" x2="{W - R}" y2="{y:.1f}" stroke="#332B60"/>'
-                     f'<text x="{L - 7}" y="{y + 3.5:.1f}" text-anchor="end" '
-                     'font-family="IBM Plex Mono,monospace" font-size="9" font-weight="600" '
-                     f'fill="#7F779E">{v:,.0f}</text>')
-        step = max(len(vals) // 5, 1)
-        xl = "".join(
-            f'<text x="{FX(i):.1f}" y="{H - 7}" text-anchor="middle" '
-            'font-family="IBM Plex Mono,monospace" font-size="9" font-weight="600" '
-            f'fill="#7F779E">&#39;{hist[i][0][2:4]}</text>'
-            for i in range(0, len(vals), step))
-        line = " ".join(f"{'L' if i else 'M'}{FX(i):.1f},{FY(v):.1f}"
-                        for i, v in enumerate(vals))
-        rising = vals[-1] >= vals[0]
-        colour = "#5FD69B" if rising else "#FF7B8A"
-        st.markdown(f'''<div class="panel chart">
-          <svg viewBox="0 0 {W} {H}" role="img"
-               aria-label="{E(fd.name)} price since {E(hist[0][0][:4])}">
-            {grid}
-            <path d="{line}" fill="none" stroke="{colour}" stroke-width="2.4"
-              stroke-linejoin="round" stroke-linecap="round"/>
-            <circle cx="{FX(len(vals) - 1):.1f}" cy="{FY(vals[-1]):.1f}" r="3.6"
-              fill="{colour}"/>
-          </svg></div>''', unsafe_allow_html=True)
-        st.caption("Month-end prices. A fund's chart is the whole story — there are no "
-                   "earnings underneath it to compare against.")
+        price_chart(hist, fd.name)
 
     sh("Why it is worth watching")
     st.markdown(f'<div class="panel"><p class="fbody">{E(fd.why)}</p></div>',
@@ -1063,6 +1094,7 @@ def shares_text(n):
     return f"{n:,.0f}"
 
 
+
 def teach_slide(i, eq, latest, card, val=None, quote_=None, px_hist=None):
     rev = latest.get("revenue"); ni = latest.get("net_income")
     eps = latest.get("eps"); dps = latest.get("dps")
@@ -1119,8 +1151,8 @@ def teach_slide(i, eq, latest, card, val=None, quote_=None, px_hist=None):
         terms = [
             ("EPS", "earnings per share",
              f"{D}{eps:,.2f}" if eps is not None else "—",
-             "Take everything the company earned last year and divide it between every "
-             "share that exists. That is EPS — <b>the profit belonging to one share</b>.",
+             "Last year's profit, divided between every share that exists — <b>the profit "
+             "belonging to one share</b>.",
              (f"{E(name)} earned {money(ni)} and has {shares_text(shares)} shares, "
               f"so each share earned <b>{D}{eps:,.2f}</b>."
               if eps is not None and ni and shares else
@@ -1131,54 +1163,49 @@ def teach_slide(i, eq, latest, card, val=None, quote_=None, px_hist=None):
 
             ("P/E ratio", "price-to-earnings",
              f"{pe:,.1f}×" if pe else "needs price",
-             "How many dollars you pay for each dollar the share earns in a year. Price "
-             "divided by EPS. <b>It is the market's expectations, priced.</b>",
+             "What you pay for each dollar the share earns in a year. <b>The market's "
+             "expectations, priced.</b>",
              (f"At {D}{price:,.2f} a share against {D}{eps:,.2f} of earnings, you pay "
               f"<b>{D}{pe:,.0f} for every {D}1</b> of annual profit — about {pe:,.0f} years "
               "of profit to earn your money back, if nothing changed."
               if pe and price and eps else
               "A $60 share earning $3 trades at 20× — $20 paid per $1 of annual profit."),
-             "High is not the same as expensive. A company at 40× may be the better buy if "
-             "profits grow into the price; one at 10× may be cheap because investors expect "
-             "trouble. <b>The ratio tells you what is assumed, not whether it is right.</b>"),
+             "High is not the same as expensive — a company at 40× may be the better buy if "
+             "profits grow into the price. <b>The ratio tells you what is assumed, not "
+             "whether it is right.</b>"),
 
             ("Net margin", "net profit margin",
              f"{margin:,.1f}%" if margin is not None else "—",
-             "Of every dollar customers spend, how much survives as profit after every "
-             "cost — materials, wages, marketing, interest and tax.",
+             "How much of every dollar customers spend survives as profit, after every cost.",
              (f"{E(name)} keeps about <b>{D}{margin:,.0f} of every {D}100</b> customers "
               f"spend."
               if margin is not None else
               "A supermarket keeps about $2 of every $100; a software company can keep $25."),
              "Thin is not automatically bad — supermarkets run on a few percent and do fine "
-             "on volume. <b>The direction matters more than the level.</b> A margin falling "
-             "year after year means the company is spending more to earn the same."),
+             "on volume. <b>The direction matters more than the level.</b>"),
 
             ("Free cash flow", "cash after capital spending",
              money(fcf),
-             "The cash left after running the business <i>and</i> paying for the new "
-             "equipment, stores or technology it needs to keep going.",
+             "Cash left after running the business <i>and</i> paying for the equipment it "
+             "needs to keep going.",
              (f"{E(name)} took in {money(ocf)} from operations and spent {money(capex)} on "
               f"capital, leaving <b>{money(fcf)}</b> against {money(ni)} of reported profit."
               if fcf is not None and ocf and capex and ni else
               "A company with $50m from operations spending $20m on equipment has $30m free."),
-             "<b>Profit is an opinion. Cash is a fact.</b> Profit involves judgement about "
-             "when to count a sale; cash either arrived or it did not. When the two drift "
-             "apart for years, trust the cash."),
+             "<b>Profit is an opinion. Cash is a fact.</b> When the two drift apart for years, "
+             "trust the cash."),
 
             ("Dividend yield", "cash paid to owners",
              f"{dy:,.2f}%" if dy else ("none" if not dps else "needs price"),
-             "The cash a company hands its shareholders each year, as a percentage of what "
-             "a share costs today.",
+             "Cash paid to shareholders each year, as a percentage of the share price.",
              (f"{E(name)} declares {D}{dps:,.2f} a share against a {D}{price:,.2f} price, "
               f"so every {D}100 invested pays about <b>{D}{dy:,.2f}</b> a year."
               if dy and dps and price else
               (f"{E(name)} pays no dividend — it reinvests the cash instead, which is normal "
                "for faster-growing companies." if not dps else
                "A $2 dividend on a $50 share is a 4% yield.")),
-             "It is the one part of a return a falling price cannot take back. Once the cash "
-             "is paid it is yours, which is why a company cutting its dividend is treated as "
-             "such bad news."),
+             "The one part of a return a falling price cannot take back — which is why a "
+             "company cutting its dividend is treated as such bad news."),
         ]
 
         st.markdown('<div class="gloss">' + "".join(
@@ -1503,6 +1530,11 @@ if have:
 # keeping more of each sale; where it lags, costs or the share count are
 # growing faster than the business.
 
+px_series = prices.monthly(ticker) if prices.has_history else []
+if len(px_series) >= 12:
+    sh("Share price", f"{px_series[0][0][:4]} to {px_series[-1][0][:4]}")
+    price_chart(px_series, eq.entity)
+
 rev_hist = eq.series("revenue")
 eps_hist = eq.series("eps")
 if len(rev_hist) >= 3 and len(eps_hist) >= 3:
@@ -1563,9 +1595,29 @@ if len(rev_hist) >= 3 and len(eps_hist) >= 3:
           stroke-linejoin="round" stroke-linecap="round"/>
         {dots}{labels}
       </svg></div>''', unsafe_allow_html=True)
-    st.caption("Both lines start at 100 so they can be compared. Where profit per share "
-               "outpaces revenue the company is keeping more of what it sells; where it "
-               "lags, costs or the share count are growing faster than the business.")
+    # What the two lines actually did, in two sentences.
+    rev_chg = ri[-1] - 100
+    eps_chg = ei[-1] - 100
+    years_span = len(rev_hist) - 1
+
+    def moved(pct):
+        return f"{'up' if pct >= 0 else 'down'} {abs(pct):,.0f}%"
+
+    if eps_chg > rev_chg + 5:
+        verdict = ("Profit per share grew faster than revenue, so the company is keeping "
+                   "more of each dollar it sells than it used to.")
+    elif rev_chg > eps_chg + 5:
+        verdict = ("Revenue grew faster than profit per share, so costs or the number of "
+                   "shares are rising faster than the business.")
+    else:
+        verdict = ("The two moved together, so profit has grown roughly in line with the "
+                   "size of the business.")
+
+    st.markdown(
+        f'<div class="readout"><p>Over {years_span} years revenue is '
+        f'<b>{moved(rev_chg)}</b> and profit per share is <b>{moved(eps_chg)}</b>.</p>'
+        f"<p>{verdict}</p></div>", unsafe_allow_html=True)
+    st.caption("Both lines start at 100 so they can be compared side by side.")
 
 # --------------------------------------------------------------------------
 # 03 this year so far
