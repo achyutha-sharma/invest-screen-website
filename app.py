@@ -522,7 +522,7 @@ div[data-testid="stVerticalBlock"] .stButton button[aria-label*="SCORE"],
 button[data-testid^="stBaseButton"]{}
 
 .card{background:var(--surf);border:1px solid var(--line);border-radius:10px;
-  padding:.85rem .95rem;height:100%;box-sizing:border-box;
+  padding:.85rem .95rem;height:100%;min-height:158px;box-sizing:border-box;
   display:flex;flex-direction:column}
 .card .ck{display:block;font-size:.58rem;letter-spacing:.11em;text-transform:uppercase;
   color:var(--text-3);font-weight:700;margin-bottom:.3rem;line-height:1.3}
@@ -599,7 +599,8 @@ div[data-testid="stHorizontalBlock"] .stButton button em{
   /* cards: equal height in each row, tighter gaps */
   div[data-testid="stHorizontalBlock"]{gap:.5rem !important;align-items:stretch}
   div[data-testid="stColumn"]{display:flex}
-  .card{width:100%;min-height:100%;padding:.8rem .85rem}
+  .card{width:100%;min-height:140px;padding:.8rem .85rem}
+  .card .spark{height:28px}
   .card .cv{font-size:1.35rem}
   .card .cd{font-size:.72rem;line-height:1.4}
 
@@ -638,7 +639,7 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 /* the inline five-year line */
 .spark{display:block;width:100%;height:30px;margin:.4rem 0 .1rem;overflow:visible}
 .mk .spark{height:26px;margin:.35rem 0 .15rem}
-.card .spark{margin:.35rem 0 .2rem}
+.card .spark{height:34px;margin:.45rem 0 .2rem}
 
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
