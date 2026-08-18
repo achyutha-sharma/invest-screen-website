@@ -611,6 +611,19 @@ div[data-testid="stHorizontalBlock"] .stButton button em{
 /* the column must stretch, or a shorter card floats instead of filling */
 div[data-testid="stColumn"] > div:has(.card){height:100%}
 
+
+/* market strip links: quieter than the numbers they sit beneath */
+div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalBlock"]
+  .stButton button{
+  background:none;border:0;color:#6FC6E8;font-size:.62rem;font-weight:600;
+  letter-spacing:.02em;padding:.25rem .2rem;min-height:auto;text-transform:lowercase;
+  opacity:.85}
+div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalBlock"]
+  .stButton button:hover{color:#9BDCF2;opacity:1;background:none;
+  text-decoration:underline}
+div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalBlock"]
+  .stButton button p{font-size:.62rem !important;font-weight:600 !important}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -784,6 +797,7 @@ if "cik" not in st.session_state and not query and prices.configured:
                         f'{"▲" if p >= 0 else "▼"} {abs(p):.2f}%</span>'
                         f'<span class="mw">{E(w)}</span></div>'
                         for _, l, w, p in mkt) + "</div>", unsafe_allow_html=True)
+        st.markdown('<span class="mktlinks"></span>', unsafe_allow_html=True)
         cols = st.columns(len(mkt))
         for col, (tk, label, _, _) in zip(cols, mkt):
             if col.button(f"what is {label}? →", key=f"fund_{tk}",
@@ -879,6 +893,14 @@ if st.session_state.get("fund"):
                     + f'</span><span class="d">{E(fq.as_of)}, delayed ~15 min</span>'
                     "</div></div>",
                     unsafe_allow_html=True)
+
+    if fd.long_run:
+        sh("What it has returned", "over the long run")
+        st.markdown(f'<div class="panel"><span class="big">{E(fd.long_run)}</span>'
+                    f'<p class="fbody" style="margin-top:.6rem">{fd.long_run_note}</p>'
+                    "</div>", unsafe_allow_html=True)
+        st.caption("A long-run average, not a recent one — a single year swings far too "
+                   "much to mean anything on its own.")
 
     sh("What this actually is")
     st.markdown(f'<div class="panel"><p class="fbody">{E(fd.what)}</p></div>',
