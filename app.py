@@ -624,6 +624,14 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalBlock"]
   .stButton button p{font-size:.62rem !important;font-weight:600 !important}
 
+
+/* the three-point pitch under the headline */
+.why{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin:1.5rem 0 .4rem;
+  padding-top:1.3rem;border-top:1px solid var(--line)}
+@media (max-width:640px){.why{grid-template-columns:1fr;gap:.95rem;margin-top:1.2rem}}
+.why .w b{display:block;font-size:.86rem;color:#FFFFFF;margin-bottom:.22rem}
+.why .w span{font-size:.81rem;color:var(--text-2);line-height:1.55}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -760,10 +768,28 @@ def ratio(a, b):
 # --------------------------------------------------------------------------
 
 if "cik" not in st.session_state:
-    st.markdown('<h1 class="hero">Research a stock <em>properly</em>.</h1>'
-                '<p class="sub">Straight from SEC filings.</p>', unsafe_allow_html=True)
+    st.markdown(
+        '<h1 class="hero">Every filing. <em>One place.</em></h1>'
+        '<p class="sub">Research any US-listed company from primary sources — financial '
+        "statements, multi-year trends, management commentary and risk disclosures, "
+        "drawn directly from SEC filings.</p>"
+        , unsafe_allow_html=True)
 
 query = st.text_input("Company name or ticker", placeholder="Search").strip()
+
+if "cik" not in st.session_state and not st.session_state.get("fund") and not query:
+    st.markdown(
+        '<div class="why">'
+        '<div class="w"><b>Primary sources only</b>'
+        "<span>Every figure traces to a filed document, with the reporting tag it came "
+        "from.</span></div>"
+        '<div class="w"><b>Context with every metric</b>'
+        "<span>Each ratio is defined, applied to the company on screen, and set against "
+        "its own history.</span></div>"
+        '<div class="w"><b>Analytical integrity</b>'
+        "<span>Metrics that do not apply to a filer are withheld rather than reported "
+        "misleadingly.</span></div>"
+        "</div>", unsafe_allow_html=True)
 
 # --------------------------------------------------------------------------
 # Movers
