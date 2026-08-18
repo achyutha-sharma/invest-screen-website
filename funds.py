@@ -27,6 +27,13 @@ class Fund:
     moves_down: list[str] = field(default_factory=list)
     why: str = ""
     watch_out: str = ""
+    # Long-run average, not a recent one. A three-year figure would need a
+    # price history the free feed does not supply, and would go stale the
+    # moment it was written. The multi-decade average is stable, and it is
+    # the number worth knowing: it sets the bar any investment is measured
+    # against.
+    long_run: str = ""
+    long_run_note: str = ""
 
 
 FUNDS: dict[str, Fund] = {
@@ -63,6 +70,13 @@ FUNDS: dict[str, Fund] = {
             "make up an unusually large share of the index, so a bad quarter for them "
             "moves the whole thing more than the name suggests."
         ),
+        long_run="about 10% a year",
+        long_run_note=(
+            "Averaged over decades, before inflation and with dividends reinvested. "
+            "<b>No individual year looks like the average</b> — the index has fallen more "
+            "than 30% in a year and risen more than 30% in another. The average is what "
+            "you get for sitting through both."
+        ),
     ),
     "QQQ": Fund(
         ticker="QQQ",
@@ -94,6 +108,14 @@ FUNDS: dict[str, Fund] = {
             "It is far more concentrated than it sounds and swings harder in both "
             "directions. A 100-company fund that is mostly one sector is not the same "
             "kind of diversification as a 500-company one."
+        ),
+        long_run="higher than the S&P, with bigger falls",
+        long_run_note=(
+            "Technology has outgrown the wider market over the last few decades, so this "
+            "has returned more than the S&P 500 over that stretch. It has also fallen "
+            "much harder when sentiment turned — it lost roughly 80% after the dot-com "
+            "peak in 2000 and took fifteen years to recover. <b>A higher average is not "
+            "free; it is paid for in the size of the drops.</b>"
         ),
     ),
     "GLD": Fund(
@@ -129,6 +151,13 @@ FUNDS: dict[str, Fund] = {
             "to collect. The only way it makes money is if someone later pays more for "
             "it than you did. That is a different proposition from owning a business, "
             "and worth being clear-eyed about."
+        ),
+        long_run="roughly keeps pace with inflation",
+        long_run_note=(
+            "Over very long stretches gold has held its purchasing power rather than "
+            "grown it — an ounce buys roughly what it always did. It has had long "
+            "stretches of going nowhere, including two decades after its 1980 peak. "
+            "<b>It is held for what it does when other things fall, not for growth.</b>"
         ),
     ),
 }
