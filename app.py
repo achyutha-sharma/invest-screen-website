@@ -625,12 +625,6 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
   .stButton button p{font-size:.62rem !important;font-weight:600 !important}
 
 
-/* the three-point pitch under the headline */
-.why{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin:1.5rem 0 .4rem;
-  padding-top:1.3rem;border-top:1px solid var(--line)}
-@media (max-width:640px){.why{grid-template-columns:1fr;gap:.95rem;margin-top:1.2rem}}
-.why .w b{display:block;font-size:.86rem;color:#FFFFFF;margin-bottom:.22rem}
-.why .w span{font-size:.81rem;color:var(--text-2);line-height:1.55}
 
 
 /* the plain-language readout under a chart */
@@ -848,36 +842,14 @@ if "cik" not in st.session_state:
         "management commentary and risk disclosures, all drawn from SEC filings.</p>"
         , unsafe_allow_html=True)
 
-query = st.text_input("Company name or ticker", placeholder="Search").strip()
-
-if "cik" not in st.session_state and not st.session_state.get("fund") and not query:
-    st.markdown(
-        '<div class="why">'
-        '<div class="w"><b>Primary sources only</b>'
-        "<span>Every figure traces to a filed document, with the reporting tag it came "
-        "from.</span></div>"
-        '<div class="w"><b>Context with every metric</b>'
-        "<span>Each ratio is defined, applied to the company on screen, and set against "
-        "its own history.</span></div>"
-        '<div class="w"><b>Analytical integrity</b>'
-        "<span>Metrics that do not apply to a filer are withheld rather than reported "
-        "misleadingly.</span></div>"
-        "</div>", unsafe_allow_html=True)
-
-# --------------------------------------------------------------------------
-# Movers
-# --------------------------------------------------------------------------
-# Quotes for a small watchlist, ranked by today's move. Scanning the whole
-# market would take thousands of calls a minute, so this is deliberately
-# labelled as a watchlist rather than dressed up as "today's biggest movers".
-
 # Ticker, label, and what it tracks. Funds, so no research page exists.
 MARKET = [
-    ("SPY", "S&P 500 ETF", "the fund tracking 500 large US companies"),
-    ("QQQ", "Nasdaq 100 ETF", "the fund tracking the largest tech names"),
-    ("GLD", "Gold ETF", "the fund holding physical gold"),
+    ("SPY", "S&P 500 ETF", "500 large US companies"),
+    ("QQQ", "Nasdaq 100 ETF", "the largest non-financial tech names"),
+    ("GLD", "Gold ETF", "physical gold held in a vault"),
 ]
 
+query = st.text_input("Company name or ticker", placeholder="Search").strip()
 
 if "cik" not in st.session_state and not query and prices.configured:
     mkt = []
@@ -905,59 +877,11 @@ if "cik" not in st.session_state and not query and prices.configured:
                 for k in ("cik", "ticker", "name", "step"):
                     st.session_state.pop(k, None)
                 st.rerun()
-        st.caption("Prices are delayed by roughly 15 minutes. These are the funds that "
-                   "track each market, not the index itself — an index is a number, a "
-                   "fund is something you can buy, so the two are close but never "
-                   "identical.")
+        st.caption("Funds tracking whole markets. They hold shares in hundreds of "
+                   "companies rather than running a business, so there is no filing to "
+                   "research — but they tell you whether a stock moved on its own news or "
+                   "with everything else.")
 
-# A query that has already been acted on must not re-trigger. Streamlit reruns
-# the whole script on every interaction, and the search box keeps its text, so
-# without this any click on an open page would bounce back to the results.
-if query and query == st.session_state.get("searched"):
-    query = ""
-
-if query:
-    try:
-        hits = search(query)
-    except Exception as e:
-        st.error(f"Could not reach the SEC: {e}")
-        st.stop()
-    if not hits:
-        st.warning(f"Nothing matches “{query}”. Only US companies that file with "
-                   "the SEC are covered — try a shorter name, or the ticker.")
-        st.stop()
-    # A list rather than a dropdown, and never auto-selected. The exact ticker
-    # a reader wants is often not the first hit -- "delta" reaches an airline
-    # and an apparel maker -- so showing the alternatives costs one click and
-    # saves guessing the precise name.
-    st.markdown(f'<p class="picker">{len(hits)} '
-                f'{"match" if len(hits) == 1 else "matches"}</p>', unsafe_allow_html=True)
-    # The whole row is the button. Streamlit cannot make an HTML block
-    # clickable, so rather than pairing a div with a separate control, the
-    # button itself carries the label and is styled to look like a row.
-    box = st.container()
-    box.markdown('<span class="hitrow"></span>', unsafe_allow_html=True)
-    for h in hits:
-        if box.button(f"{h['ticker']}  ·  {h['name'].title()}",
-                      key=f"hit_{h['cik']}", use_container_width=True):
-            st.session_state.pop("fund", None)
-            for k in ("step", "quiz", "quiz_round", "quiz_seed", "quiz_seen"):
-                st.session_state.pop(k, None)
-            st.session_state["cik"] = h["cik"]
-            st.session_state["ticker"] = h["ticker"]
-            st.session_state["name"] = h["name"]
-            st.session_state["searched"] = query
-            st.rerun()
-    st.stop()
-
-# --------------------------------------------------------------------------
-# Fund page
-# --------------------------------------------------------------------------
-# A fund has no filing to read, so this page is explanation rather than
-# analysis: what the thing is, what moves it, and what to be wary of. Nothing
-# here is computed, because nothing here changes with the price.
-
-# Typing in the search box means leaving whatever page is open.
 if query and st.session_state.get("fund"):
     st.session_state.pop("fund", None)
     st.session_state.pop("searched", None)
