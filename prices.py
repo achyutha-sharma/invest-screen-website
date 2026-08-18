@@ -24,7 +24,9 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 QUOTE_URL = "https://finnhub.io/api/v1/quote"
-CANDLE_URL = "https://finnhub.io/api/v1/stock/candle"
+# History comes from Tiingo rather than Finnhub, whose candle endpoint is not
+# on the free tier. Two providers, each doing the one thing it does well.
+TIINGO_URL = "https://api.tiingo.com/tiingo/daily/{sym}/prices"
 
 CACHE_DIR = Path(os.environ.get("PRICE_CACHE_DIR", Path.home() / ".price_cache"))
 QUOTE_TTL = 10 * 60           # free-tier data is delayed anyway
@@ -53,12 +55,19 @@ class PriceClient:
     string, so the page can explain the gap instead of showing nothing.
     """
 
-    def __init__(self, api_key: str | None = None, cache_dir: Path = CACHE_DIR,
-                 timeout: int = 12):
+    def __init__(self, api_key: str | None = None, history_key: str | None = None,
+                 cache_dir: Path = CACHE_DIR, timeout: int = 12):
         self.key = api_key or os.environ.get("FINNHUB_API_KEY", "")
+        # History is optional and separate: without it the charts hide and
+        # every other figure on the page is unaffected.
+        self.history_key = history_key or os.environ.get("TIINGO_API_KEY", "")
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.timeout = timeout
+
+    @property
+    def has_history(self) -> bool:
+        return bool(self.history_key)
 
     @property
     def configured(self) -> bool:
@@ -148,32 +157,42 @@ class PriceClient:
     def monthly(self, ticker: str, years: int = 11) -> list[tuple[str, float]]:
         """Month-end closes, oldest first, as (YYYY-MM-DD, close).
 
-        Candle history is not on every free plan. When it is unavailable this
-        returns nothing and the caller falls back to showing no P/E history --
-        which is why the scorecard treats that component as skippable.
+        Returns nothing when no history provider is configured, which is why
+        every chart checks the length before drawing rather than assuming.
         """
         sym = ticker.strip().upper()
-        if not sym:
+        if not sym or not self.history_key:
             return []
 
         cached = self._cached(f"h_{sym}.json", HISTORY_TTL)
         if cached is not None:
             return [tuple(r) for r in cached]
 
-        now = int(time.time())
-        data, _ = self._get(CANDLE_URL, {
-            "symbol": sym, "resolution": "M",
-            "from": now - years * 365 * 24 * 3600, "to": now,
-        })
+        start = date.today().replace(year=date.today().year - years).isoformat()
         out: list[tuple[str, float]] = []
-        if data and data.get("s") == "ok":
-            for t, c in zip(data.get("t", []), data.get("c", [])):
-                try:
-                    d = datetime.fromtimestamp(int(t), tz=timezone.utc).strftime("%Y-%m-%d")
-                    out.append((d, float(c)))
-                except Exception:
-                    continue
-        self._store(f"h_{sym}.json", out)
+        try:
+            import requests
+
+            r = requests.get(
+                TIINGO_URL.format(sym=sym),
+                params={"startDate": start, "resampleFreq": "monthly",
+                        "token": self.history_key},
+                timeout=self.timeout,
+            )
+            if r.status_code == 200:
+                for row in r.json():
+                    d = str(row.get("date", ""))[:10]
+                    # adjClose accounts for splits and dividends, so a stock
+                    # that split does not appear to have halved.
+                    px = row.get("adjClose", row.get("close"))
+                    if d and px is not None:
+                        out.append((d, float(px)))
+        except Exception:
+            return []
+
+        out.sort()
+        if out:
+            self._store(f"h_{sym}.json", out)
         return out
 
     def at_fiscal_ends(self, ticker: str, ends: list[tuple[str, str]]) -> dict[str, float]:
