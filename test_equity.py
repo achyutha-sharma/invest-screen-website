@@ -307,69 +307,106 @@ def test_scorecard():
 # Prices: the one source outside SEC. Must never raise.
 # ---------------------------------------------------------------------------
 def test_prices():
-    """The one source outside SEC. Must degrade, never raise."""
+    """The only sources outside SEC. Both must degrade, never raise."""
     import pathlib, tempfile
     from prices import PriceClient, Quote
 
     tmp = pathlib.Path(tempfile.mkdtemp())
 
-    # No key configured: everything empty, with a reason attached.
-    nokey = PriceClient(api_key="", cache_dir=tmp)
-    assert not nokey.configured
+    # Nothing configured: empty results with a reason, no exception.
+    nokey = PriceClient(api_key="", history_key="", cache_dir=tmp)
+    assert not nokey.configured and not nokey.has_history
     q = nokey.quote("NKE")
     assert not q.available and "No price feed" in q.problem
     assert nokey.monthly("NKE") == []
     assert nokey.at_fiscal_ends("NKE", [("FY2026", "2026-05-31")]) == {}
 
-    # Network down.
+    # Quotes configured but history not -- the charts hide, prices still work.
+    class QuoteOnly(PriceClient):
+        def _get(self, url, params):
+            return {"c": 62.0, "d": -1.34, "dp": -2.12, "pc": 63.34, "t": 1786000000}, ""
+
+    qo = QuoteOnly(api_key="x", history_key="",
+                   cache_dir=pathlib.Path(tempfile.mkdtemp()))
+    assert qo.quote("NKE").available
+    assert qo.monthly("NKE") == [], "history must stay empty without its own key"
+
+    # Network down on quotes.
     class Offline(PriceClient):
         def _get(self, url, params):
             return None, "The price feed could not be reached."
 
     off = Offline(api_key="x", cache_dir=pathlib.Path(tempfile.mkdtemp()))
     assert not off.quote("NKE").available
-    assert off.monthly("NKE") == []
 
-    # A well-formed Finnhub response.
+    # A well-formed Finnhub quote.
     class Fake(PriceClient):
         def _get(self, url, params):
-            if "quote" in url:
-                return {"c": 62.0, "d": -1.34, "dp": -2.12, "pc": 63.34,
-                        "t": 1786000000}, ""
-            return {"s": "ok",
-                    "t": [1748563200, 1780099200, 1785283200],
-                    "c": [70.50, 63.40, 62.40]}, ""
+            return {"c": 62.0, "d": -1.34, "dp": -2.12, "pc": 63.34, "t": 1786000000}, ""
 
     f = Fake(api_key="x", cache_dir=pathlib.Path(tempfile.mkdtemp()))
     fq = f.quote("NKE")
-    assert fq.available and fq.price == 62.0
-    assert fq.prev_close == 63.34
+    assert fq.available and fq.price == 62.0 and fq.prev_close == 63.34
     assert round(fq.day_change_pct, 2) == -2.12
     assert fq.source == "Finnhub" and fq.as_of
-
-    hist = f.monthly("NKE")
-    assert len(hist) == 3 and hist[0][1] == 70.50
-
-    # Fiscal-year prices: near matches only, far-off years dropped.
-    got = f.at_fiscal_ends("NKE", [("FY2026", "2026-05-31"), ("FY2015", "2015-05-31")])
-    assert list(got) == ["FY2026"], got
 
     # An unknown symbol comes back as zero, not an exception.
     class Zero(PriceClient):
         def _get(self, url, params):
             return {"c": 0, "d": None, "dp": None, "pc": 0, "t": 0}, ""
 
-    z = Zero(api_key="x", cache_dir=pathlib.Path(tempfile.mkdtemp()))
-    zq = z.quote("ZZZZ")
+    zq = Zero(api_key="x", cache_dir=pathlib.Path(tempfile.mkdtemp())).quote("ZZZZ")
     assert not zq.available and "No price found" in zq.problem
 
-    # Rate limiting and a bad key are reported plainly.
+    # Rate limiting is reported plainly rather than swallowed.
     class Limited(PriceClient):
         def _get(self, url, params):
             return None, "The price feed is rate limited; try again shortly."
 
     assert "rate limited" in Limited(api_key="x", cache_dir=tmp).quote("NKE").problem
+
+    # A quote with no move reported stays None rather than defaulting to zero,
+    # so the page can hide the badge instead of claiming the price was flat.
+    assert Quote(price=62.0).day_change_pct is None
+    assert Quote(price=62.0, prev_close=64.0, day_change_pct=-3.12).day_change_pct == -3.12
+    assert not Quote(price=0).available
+    assert not Quote().available
     print("prices ok")
+
+
+def test_history():
+    """Tiingo history, and the fiscal-year matching built on it."""
+    import pathlib, tempfile
+    from prices import PriceClient
+
+    rows = [
+        {"date": "2025-05-30T00:00:00.000Z", "close": 70.0, "adjClose": 70.50},
+        {"date": "2026-05-29T00:00:00.000Z", "close": 63.0, "adjClose": 63.40},
+        {"date": "2026-07-31T00:00:00.000Z", "close": 62.0, "adjClose": 62.40},
+    ]
+
+    class FakeHist(PriceClient):
+        def monthly(self, ticker, years=11):
+            # adjClose is preferred, so a split does not look like a halving.
+            return sorted((str(r["date"])[:10], float(r["adjClose"])) for r in rows)
+
+    h = FakeHist(api_key="x", history_key="t",
+                 cache_dir=pathlib.Path(tempfile.mkdtemp()))
+    hist = h.monthly("NKE")
+    assert len(hist) == 3 and hist[0] == ("2025-05-30", 70.50)
+    assert hist == sorted(hist), "history must be oldest first"
+
+    # Within 45 days matches; a year with no nearby price is dropped rather
+    # than borrowing one from months away.
+    got = h.at_fiscal_ends("NKE", [("FY2026", "2026-05-31"), ("FY2015", "2015-05-31")])
+    assert got == {"FY2026": 63.40}, got
+
+    # No history configured at all.
+    bare = PriceClient(api_key="x", history_key="",
+                       cache_dir=pathlib.Path(tempfile.mkdtemp()))
+    assert bare.monthly("NKE") == []
+    assert bare.at_fiscal_ends("NKE", [("FY2026", "2026-05-31")]) == {}
+    print("history ok")
 
 
 FAKE_10K = """
@@ -642,6 +679,7 @@ def main():
     test_guards()
     test_scorecard()
     test_prices()
+    test_history()
     test_filing_text()
     test_risk_junk_rejected()
     test_span_picks_real_section()
