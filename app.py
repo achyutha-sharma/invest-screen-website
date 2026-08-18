@@ -769,10 +769,10 @@ def ratio(a, b):
 
 if "cik" not in st.session_state:
     st.markdown(
-        '<h1 class="hero">Every filing. <em>One place.</em></h1>'
-        '<p class="sub">Research any US-listed company from primary sources — financial '
-        "statements, multi-year trends, management commentary and risk disclosures, "
-        "drawn directly from SEC filings.</p>"
+        '<h1 class="hero">Everything you need to <em>research a stock</em>.</h1>'
+        '<p class="sub">One place to research any US-listed company and invest with more '
+        "information — financial statements, multi-year trends, quarterly results, "
+        "management commentary and risk disclosures, all drawn from SEC filings.</p>"
         , unsafe_allow_html=True)
 
 query = st.text_input("Company name or ticker", placeholder="Search").strip()
