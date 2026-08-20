@@ -13,6 +13,8 @@ import os
 
 import streamlit as st
 
+from datetime import date
+
 from filing_text import latest_filings, read_filing
 import funds as funds_data
 from prices import PriceClient
@@ -641,6 +643,23 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 .mk .spark{height:26px;margin:.35rem 0 .15rem}
 .card .spark{height:34px;margin:.45rem 0 .2rem}
 
+
+/* biggest moves */
+.move{background:var(--surf);border:1px solid var(--line);border-radius:9px;
+  padding:.8rem .95rem;margin-bottom:.5rem}
+.mvhead{display:flex;align-items:baseline;gap:.6rem;flex-wrap:wrap}
+.mvt{font-family:var(--mono);font-size:.7rem;font-weight:700;color:var(--acc);
+  background:rgba(169,139,255,.13);border:1px solid var(--acc-dim);padding:.16rem .4rem;
+  border-radius:4px}
+.mvn{font-size:.9rem;font-weight:600;color:var(--text)}
+.mvp{font-family:var(--mono);font-size:1rem;font-weight:700;margin-left:auto}
+.mvp.up{color:var(--up)} .mvp.down{color:var(--down)}
+.mvpx{font-family:var(--mono);font-size:.78rem;color:var(--text-3)}
+.mvw{margin:.45rem 0 0;font-size:.83rem;color:var(--text-2);line-height:1.55;max-width:74ch}
+.mvw b{color:#FFFFFF;font-weight:700}
+.mvw a{color:var(--acc);text-decoration:underline}
+@media (max-width:560px){.mvp{margin-left:0}}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -1000,6 +1019,127 @@ if st.session_state.get("fund"):
                 "profit of its own. Prices come from a market feed. Educational only.</p>",
                 unsafe_allow_html=True)
     st.stop()
+
+# --------------------------------------------------------------------------
+# Biggest moves
+# --------------------------------------------------------------------------
+# A watchlist rather than a market scan -- quoting every listed company would
+# take thousands of calls a minute. Each mover is checked against the index and
+# against its own filings, because the useful question is not "what moved" but
+# "did something get reported, or is the market reacting to something the
+# filings cannot see".
+
+WATCHLIST = [
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO",
+    "JPM", "V", "WMT", "XOM", "JNJ", "PG", "HD", "KO",
+    "NFLX", "NKE", "SBUX", "DIS", "PFE", "MRNA", "INTC", "AMD",
+]
+
+
+@st.cache_data(show_spinner=False, ttl=900)
+def biggest_moves(tickers: tuple, market_pct: float | None):
+    """Watchlist quotes ranked by absolute move, with a filing check.
+
+    Falls and rises are ranked together: a 10% drop is at least as worth
+    looking at as a 10% rise, and a board that only shows green teaches the
+    wrong instinct.
+    """
+    out = []
+    for tk in tickers:
+        try:
+            qt = prices.quote(tk)
+        except Exception:
+            continue
+        if not (qt.available and qt.day_change_pct is not None):
+            continue
+        out.append({"ticker": tk, "price": qt.price, "pct": qt.day_change_pct})
+
+    out.sort(key=lambda r: abs(r["pct"]), reverse=True)
+    top = out[:3]
+
+    # Only the shortlist gets a filing lookup, so this costs three requests
+    # rather than one per watchlist name.
+    for r in top:
+        r["cik"] = r["name"] = None
+        r["filing"] = None
+        try:
+            hits = search(r["ticker"])
+            if hits:
+                r["cik"] = hits[0]["cik"]
+                r["name"] = hits[0]["name"].title()
+                recent = latest_filings(client, hits[0]["cik"], limit=3)
+                if recent:
+                    filed = date.fromisoformat(recent[0]["filed"])
+                    r["filing"] = {
+                        "form": recent[0]["form"],
+                        "filed": recent[0]["filed"],
+                        "url": recent[0]["url"],
+                        "days": (date.today() - filed).days,
+                    }
+        except Exception:
+            pass
+    return top
+
+
+if "cik" not in st.session_state and not query and prices.configured:
+    mkt_pct = None
+    for _tk, _l, _w, _p, _sp in (mkt if "mkt" in dir() else []):
+        if _tk == "SPY":
+            mkt_pct = _p
+
+    moves = biggest_moves(tuple(WATCHLIST), mkt_pct)
+    if moves:
+        st.markdown('<p class="picker">Biggest moves today</p>', unsafe_allow_html=True)
+        for r in moves:
+            up = r["pct"] >= 0
+            f = r["filing"]
+
+            # Whether the move is company-specific or the whole market moving.
+            if mkt_pct is not None and abs(r["pct"]) > abs(mkt_pct) * 2 + 1:
+                context = ("the wider market barely moved, so this is specific to the "
+                           "company")
+            elif mkt_pct is not None and (r["pct"] >= 0) == (mkt_pct >= 0):
+                context = "the wider market moved the same way"
+            else:
+                context = "the wider market moved the other way"
+
+            article = "an" if f and f["form"].startswith(("8", "11", "18")) else "a"
+            if f and f["days"] <= 3:
+                note = (f'Filed {article} <b>{E(f["form"])}</b> {"today" if f["days"] == 0 else
+                        f"{f['days']} day{'s' if f['days'] != 1 else ''} ago"} — '
+                        "the report may explain it.")
+                link = f'<a href="{E(f["url"])}" target="_blank" rel="noopener">read it</a>'
+            elif f:
+                note = (f'Nothing filed since the <b>{E(f["form"])}</b> on '
+                        f'{E(f["filed"])}. <b>A move this size with no new filing means '
+                        "the market is reacting to something the filings cannot see</b> — "
+                        "results from elsewhere, guidance, or an analyst view.")
+                link = ""
+            else:
+                note = "No recent filings were found for this ticker."
+                link = ""
+
+            st.markdown(
+                f'<div class="move"><div class="mvhead">'
+                f'<span class="mvt">{E(r["ticker"])}</span>'
+                f'<span class="mvn">{E(r["name"] or "")}</span>'
+                f'<span class="mvp {"up" if up else "down"}">'
+                f'{"▲" if up else "▼"} {abs(r["pct"]):.2f}%</span>'
+                f'<span class="mvpx">{D}{r["price"]:,.2f}</span></div>'
+                f'<p class="mvw">{context.capitalize()}. {note} {link}</p></div>',
+                unsafe_allow_html=True)
+
+        cols = st.columns(len(moves))
+        for col, r in zip(cols, moves):
+            if r["cik"] and col.button(f"Open {r['ticker']}", key=f"mvb_{r['ticker']}",
+                                       use_container_width=True):
+                st.session_state["cik"] = r["cik"]
+                st.session_state["ticker"] = r["ticker"]
+                st.session_state["name"] = r["name"]
+                st.session_state.pop("fund", None)
+                st.rerun()
+        st.caption("Ranked by size of move, up or down, across a watchlist of large "
+                   "companies — not a scan of the whole market.")
 
 # A query already acted on must not re-trigger: Streamlit reruns the whole
 # script on every interaction and the search box keeps its text, so without
