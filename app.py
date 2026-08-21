@@ -30,6 +30,12 @@ E = html.escape
 D = "&#36;"          # for markdown, where Streamlit reads bare $ as LaTeX
 DH = "$"            # plain markdown only; HTML blocks must use D
 
+BYLINE = (
+    '<p class="byline">Built by '
+    '<a href="https://www.linkedin.com/in/achyutha-sharma-74a94634a/" '
+    'target="_blank" rel="noopener">Achyutha Sharma</a></p>'
+)
+
 
 
 # --------------------------------------------------------------------------
@@ -660,6 +666,11 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 .mvw a{color:var(--acc);text-decoration:underline}
 @media (max-width:560px){.mvp{margin-left:0}}
 
+
+.byline{font-size:.76rem;color:var(--text-3);margin:.5rem 0 0}
+.byline a{color:var(--acc);text-decoration:none;font-weight:600}
+.byline a:hover{text-decoration:underline;color:var(--acc-2)}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -1016,8 +1027,8 @@ if st.session_state.get("fund"):
 
     st.markdown('<p class="disc">Funds file holdings reports rather than financial '
                 "statements, so there are no ratios here — a fund has no revenue or "
-                "profit of its own. Prices come from a market feed. Educational only.</p>",
-                unsafe_allow_html=True)
+                "profit of its own. Prices come from a market feed. Educational only.</p>"
+                + BYLINE, unsafe_allow_html=True)
     st.stop()
 
 # --------------------------------------------------------------------------
@@ -1555,7 +1566,7 @@ if mode == "Teach me":
 
     st.markdown('<p class="disc">Every figure comes from filings made to the U.S. Securities '
                 "and Exchange Commission. Educational only — not advice to buy or sell "
-                "anything.</p>", unsafe_allow_html=True)
+                "anything.</p>" + BYLINE, unsafe_allow_html=True)
     st.stop()
 
 strip = [
@@ -1937,5 +1948,5 @@ if eq.notes:
                 unsafe_allow_html=True)
 
 st.markdown('<p class="disc">Figures come from SEC filings. Share price and today\'s '
-            "move come from a market feed. Educational research only — not advice.</p>",
-            unsafe_allow_html=True)
+            "move come from a market feed. Educational research only — not advice.</p>"
+            + BYLINE, unsafe_allow_html=True)
