@@ -1,11 +1,13 @@
 name: keep awake
+
 on:
   schedule:
-    - cron: "0 */6 * * *"
+    - cron: "0 */3 * * *"
   workflow_dispatch:
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - run: curl -sSf https://your-app.streamlit.app > /dev/null
+      - run: curl -sSfL https://invest-screen.streamlit.app > /dev/null
+      
