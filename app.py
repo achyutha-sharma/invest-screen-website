@@ -898,6 +898,28 @@ def figures_for(tick: str, e, latest_p, quote_, hist) -> ranking.Figures:
 
 
 @st.cache_data(show_spinner=False, ttl=21_600)
+def company_bundle(tick: str):
+    """Everything a peer lookup needs, fetched once and cached.
+
+    Returns None when the company cannot be loaded at all, so callers can
+    tell "no such filer" from "this one failed".
+    """
+    try:
+        hits = search(tick)
+        if not hits:
+            return None
+        h = hits[0]
+        e = extract_equity(facts(h["cik"]), cik=h["cik"])
+        hist = prices.monthly(h["ticker"]) if prices.has_history else []
+        return {
+            "cik": h["cik"], "ticker": h["ticker"],
+            "eq": e, "quote": quote(h["ticker"]), "hist": hist,
+        }
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False, ttl=21_600)
 def peer_score(tick: str, cik_: str, sic: str):
     """This company's weighted score, ranked against its peer set.
 
@@ -911,17 +933,10 @@ def peer_score(tick: str, cik_: str, sic: str):
 
     figs = []
     for t in [tick] + list(tickers):
-        try:
-            hits = search(t)
-            if not hits:
-                continue
-            h = hits[0]
-            e = extract_equity(facts(h["cik"]), cik=h["cik"])
-            hist = prices.monthly(h["ticker"]) if prices.has_history else []
-            figs.append(figures_for(h["ticker"], e, e.latest,
-                                    quote(h["ticker"]), hist))
-        except Exception:
-            continue
+        b = company_bundle(t)
+        if b:
+            figs.append(figures_for(b["ticker"], b["eq"], b["eq"].latest,
+                                    b["quote"], b["hist"]))
 
     if len(figs) < 2:
         return None
@@ -1874,21 +1889,24 @@ if mode == "Compare":
             "think belong side by side.</p></div>", unsafe_allow_html=True)
     else:
         rows = []
+        unresolved: list[str] = []
         for tk in [ticker] + peer_tickers:
+            b = company_bundle(tk)
+            if not b:
+                unresolved.append(tk)
+                continue
             try:
-                hits = search(tk)
-                if not hits:
-                    continue
-                h = hits[0]
-                peq = eq if h["cik"] == cik else extract_equity(facts(h["cik"]), cik=h["cik"])
-                pq = q if h["cik"] == cik else quote(h["ticker"])
+                h = {"cik": b["cik"], "ticker": b["ticker"],
+                     "name": b["eq"].entity}
+                peq = eq if b["cik"] == cik else b["eq"]
+                pq = q if b["cik"] == cik else b["quote"]
                 pl = peq.latest
                 peps = pl.get("eps")
                 pprice = pq.price if pq.available else None
                 pni, prev = pl.get("net_income"), pl.get("revenue")
                 pdps = pl.get("dps")
                 pdy = (100 * pdps / pprice) if (pdps and pprice) else 0.0
-                phist = prices.monthly(h["ticker"]) if prices.has_history else []
+                phist = b["hist"]
                 pcagr = annualised(phist)
 
                 # Growth actually reported last year, and the record against
@@ -1941,6 +1959,7 @@ if mode == "Compare":
                     "next": pnext,
                 })
             except Exception:
+                unresolved.append(tk)
                 continue
 
         scored = [r for r in rows if r["pe"] is not None]
@@ -1948,17 +1967,14 @@ if mode == "Compare":
             # Naming what was dropped and why beats a bare refusal -- otherwise
             # a reader cannot tell a missing price from a missing filing.
             dropped = [r["name"] for r in rows if r["pe"] is None]
-            tried = {r["ticker"] for r in rows}
-            never = [t for t in [ticker] + list(peer_tickers)
-                     if t.upper() not in {x.upper() for x in tried}]
+            missed = [t for t in unresolved if t.upper() != ticker.upper()]
 
             bits = []
             if dropped:
                 bits.append("no share price or no positive earnings for "
                             + ", ".join(E(n) for n in dropped[:4]))
-            if never:
-                bits.append("no SEC filings found for "
-                            + ", ".join(E(t) for t in never[:4]))
+            if missed:
+                bits.append("could not load " + ", ".join(E(t) for t in missed[:4]))
 
             st.markdown(
                 '<div class="panel"><p class="fbody"><b>Not enough companies could be '
