@@ -796,6 +796,15 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 .why{margin:.5rem 0 0;font-size:.78rem;color:var(--text-2);line-height:1.5}
 .why b{color:#FFFFFF}
 
+
+.parts th{font-size:.62rem;line-height:1.25;vertical-align:bottom}
+.parts th i{display:block;font-style:normal;font-family:var(--mono);font-size:.58rem;
+  color:var(--acc);font-weight:600;margin-top:.15rem}
+.parts td{padding:.55rem .5rem}
+.parts td:first-child{text-align:left;font-weight:700;white-space:nowrap}
+.parts td.tot{font-family:var(--mono);font-weight:700;color:#FFFFFF;
+  border-left:1px solid var(--line)}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -2189,59 +2198,38 @@ if mode == "Compare":
                 unsafe_allow_html=True)
 
 
-            # A grouped bar per component. Seven numbers in a row are hard to
-            # read across four companies; the shape of a company's strengths
-            # is not.
+            # Component scores as a table. A chart shows the shape of a
+            # company's strengths; the numbers let a reader check them.
             charted = [r for r in scored if r["parts"]]
             if charted:
                 keys = list(ranking.WEIGHTS)
-                COLS = ["#A98BFF", "#5FD69B", "#F0C46A", "#6FC6E8", "#FF7B8A"]
-                W, H = 780, 250
-                left, bottom, top = 34, 62, 16
-                gw = (W - left - 8) / len(keys)
-                bw = min(14, (gw - 10) / max(len(charted), 1))
-
-                grid = ""
-                for v in (0, 25, 50, 75, 100):
-                    y = top + (1 - v / 100) * (H - top - bottom)
-                    grid += (f'<line x1="{left}" y1="{y:.1f}" x2="{W - 8}" y2="{y:.1f}" '
-                             'stroke="#332B60"/>'
-                             f'<text x="{left - 6}" y="{y + 3.5:.1f}" text-anchor="end" '
-                             'font-family="IBM Plex Mono,monospace" font-size="9" '
-                             f'fill="#7F779E">{v}</text>')
-
-                bars, labels = "", ""
-                for gi, k in enumerate(keys):
-                    gx = left + gi * gw
-                    for ci, r in enumerate(charted):
+                hdr = "".join(
+                    f'<th>{E(ranking.LABELS[k])}<i>{ranking.WEIGHTS[k]}%</i></th>'
+                    for k in keys)
+                brows = ""
+                for r in charted:
+                    cells = ""
+                    for k in keys:
                         v = r["parts"].get(k)
                         if v is None:
-                            continue
-                        x = gx + (gw - bw * len(charted)) / 2 + ci * bw
-                        h = (v / 100) * (H - top - bottom)
-                        y = top + (H - top - bottom) - h
-                        bars += (f'<rect x="{x:.1f}" y="{y:.1f}" width="{bw - 2:.1f}" '
-                                 f'height="{max(h, 1):.1f}" rx="2" '
-                                 f'fill="{COLS[ci % len(COLS)]}"/>')
-                    words = ranking.LABELS[k].split()
-                    for li, word in enumerate(words):
-                        labels += (f'<text x="{gx + gw / 2:.1f}" '
-                                   f'y="{H - bottom + 16 + li * 11}" '
-                                   'text-anchor="middle" font-size="9" '
-                                   f'fill="#B3ACD1">{E(word)}</text>')
-
-                key = "".join(
-                    f'<span><i style="background:{COLS[i % len(COLS)]}"></i>'
-                    f'{E(r["name"])}</span>' for i, r in enumerate(charted))
-
+                            cells += '<td><span class="ret none">—</span></td>'
+                        else:
+                            band = ("up" if v >= 60 else
+                                    "down" if v < 40 else "none")
+                            cells += (f'<td><span class="ret {band}">{v:.0f}</span>'
+                                      "</td>")
+                    total = ("—" if r["score"] is None else f'{r["score"]:.0f}')
+                    brows += (f'<tr><td>{E(r["name"])}</td>{cells}'
+                              f'<td class="tot">{total}</td></tr>')
                 st.markdown(
-                    f'<div class="panel chart"><div class="ckey">{key}</div>'
-                    f'<svg viewBox="0 0 {W} {H}" role="img" '
-                    'aria-label="Score by component for each company">'
-                    f"{grid}{bars}{labels}</svg></div>", unsafe_allow_html=True)
+                    '<div class="panel" style="overflow-x:auto">'
+                    '<table class="comp wtable parts">'
+                    f"<thead><tr><th>Company</th>{hdr}<th>Score</th></tr></thead>"
+                    f"<tbody>{brows}</tbody></table></div>", unsafe_allow_html=True)
                 st.caption("Each component scored 0-100 against the others shown, then "
-                           "weighted into the score. A missing bar means the filings did "
-                           "not contain enough to score it.")
+                           "weighted by the percentage in the header. A dash means the "
+                           "filings did not contain enough to score it, and the "
+                           "remaining components were reweighted.")
 
             worked = [r for r in scored if marks.get(r["ticker"])]
             if worked:
