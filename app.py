@@ -1666,9 +1666,35 @@ if mode == "Compare":
             scored.sort(key=lambda r: r["pct"], reverse=True)
             st.markdown(
                 '<p class="lead">Ordered by <b>how much of each share price rests on '
-                "profits not yet earned</b>. Higher up, more of what you pay is a bet on "
-                "the future — which is what makes a share swing harder on news.</p>",
-                unsafe_allow_html=True)
+                "profits not yet earned</b>.</p>", unsafe_allow_html=True)
+
+            with st.expander("What does “paying for future growth” mean?", expanded=True):
+                st.markdown(
+                    "**Every share price is two things added together:** what the company "
+                    "earns today, and what people expect it to earn later.\n\n"
+                    "A business with no growth ahead of it — steady profits, no more, no "
+                    "less — tends to trade around **10 times its earnings**. So a company "
+                    "earning \\$2 a share would be worth about \\$20 on today's profits "
+                    "alone.\n\n"
+                    "If that share actually costs \\$100, then \\$20 is paid for profit "
+                    "already reported and the other \\$80 is paid for profit that has not "
+                    "happened yet. **That is 80% paying for future growth.**")
+                st.markdown(
+                    "#### What it means for the company\n"
+                    "A high figure is the market saying it expects this business to grow "
+                    "a lot. That is not a compliment or an insult — it is an expectation "
+                    "the company now has to meet.\n\n"
+                    "- **The company has to deliver.** Results that would be fine for an "
+                    "ordinary business can disappoint one priced for growth, and the "
+                    "share falls even though nothing went wrong.\n"
+                    "- **A low figure means little is expected.** Sometimes that is a good "
+                    "business nobody is watching. Sometimes investors expect profits to "
+                    "shrink, and they are right.\n"
+                    "- **Neither is better on its own.** It tells you what has been "
+                    "assumed, not whether the assumption is correct.")
+                st.caption("The 10x marker is a rough reference point, not a fair value. "
+                           "A loss-making company has no figure here at all, because there "
+                           "are no earnings to measure the price against.")
 
             head = ("<tr><th>Company</th><th>Paying for future growth</th>"
                     "<th>Price return a year</th><th>P/E</th></tr>")
