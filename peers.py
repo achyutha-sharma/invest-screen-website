@@ -86,6 +86,75 @@ CURATED: dict[str, list[str]] = {
     "T": ["VZ", "TMUS"],
     "VZ": ["T", "TMUS"],
     "TMUS": ["VZ", "T"],
+
+    # Specialty and beauty retail. These share SIC 5990 with almost every
+    # unclassified shop in America, so the code alone is useless here -- the
+    # peer set has to be named.
+    "ULTA": ["EL", "COTY", "BBWI"],
+    "EL": ["ULTA", "COTY", "PG"],
+    "COTY": ["EL", "ULTA", "PG"],
+    "BBWI": ["ULTA", "EL", "GPS"],
+    "GPS": ["ANF", "URBN", "AEO"],
+    "ANF": ["GPS", "URBN", "AEO"],
+    "URBN": ["ANF", "GPS", "AEO"],
+    "AEO": ["ANF", "GPS", "URBN"],
+    "ROST": ["TJX", "BURL", "TGT"],
+    "TJX": ["ROST", "BURL", "TGT"],
+    "BURL": ["ROST", "TJX", "TGT"],
+    "DG": ["DLTR", "WMT", "TGT"],
+    "DLTR": ["DG", "WMT", "TGT"],
+    "BBY": ["TGT", "WMT", "AMZN"],
+    "DECK": ["NKE", "LULU", "UAA"],
+    "CROX": ["NKE", "DECK", "UAA"],
+    "ONON": ["NKE", "DECK", "LULU"],
+
+    # Restaurants and consumer brands.
+    "DPZ": ["CMG", "YUM", "MCD"],
+    "WEN": ["MCD", "YUM", "DPZ"],
+    "QSR": ["MCD", "YUM", "WEN"],
+    "MNST": ["KO", "PEP", "CELH"],
+    "CELH": ["MNST", "KO", "PEP"],
+    "KHC": ["GIS", "K", "PEP"],
+    "GIS": ["KHC", "K", "PEP"],
+    "K": ["GIS", "KHC", "PEP"],
+    "CL": ["PG", "KMB", "CHD"],
+    "KMB": ["PG", "CL", "CHD"],
+
+    # Technology and software.
+    "ADBE": ["CRM", "MSFT", "ORCL"],
+    "NOW": ["CRM", "ADBE", "MSFT"],
+    "SHOP": ["AMZN", "SQ", "PYPL"],
+    "UBER": ["LYFT", "DASH", "ABNB"],
+    "LYFT": ["UBER", "DASH", "ABNB"],
+    "DASH": ["UBER", "ABNB", "LYFT"],
+    "ABNB": ["UBER", "DASH", "MAR"],
+    "QCOM": ["NVDA", "AMD", "AVGO"],
+    "AVGO": ["NVDA", "QCOM", "AMD"],
+    "MU": ["NVDA", "AMD", "INTC"],
+    "TXN": ["AVGO", "QCOM", "INTC"],
+
+    # Health care and pharmacy.
+    "LLY": ["PFE", "MRK", "ABBV"],
+    "ABBV": ["PFE", "MRK", "LLY"],
+    "BMY": ["PFE", "MRK", "ABBV"],
+    "AMGN": ["ABBV", "MRK", "LLY"],
+    "MRNA": ["PFE", "BNTX", "MRK"],
+    "CVS": ["WBA", "UNH", "CI"],
+    "UNH": ["CVS", "CI", "ELV"],
+    "HOOD": ["SCHW", "COIN", "IBKR"],
+    "COIN": ["HOOD", "SCHW", "IBKR"],
+    "SCHW": ["HOOD", "IBKR", "MS"],
+
+    # Industrials and energy.
+    "CAT": ["DE", "CMI", "HON"],
+    "DE": ["CAT", "CMI", "AGCO"],
+    "BA": ["LMT", "RTX", "GD"],
+    "LMT": ["BA", "RTX", "GD"],
+    "RTX": ["LMT", "BA", "GD"],
+    "CVX": ["XOM", "COP", "OXY"],
+    "COP": ["XOM", "CVX", "OXY"],
+    "NEE": ["DUK", "SO", "AEP"],
+    "DUK": ["NEE", "SO", "AEP"],
 }
 
 # SIC codes too broad to make a useful peer set from. Grouping by these would
