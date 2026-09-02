@@ -1665,6 +1665,49 @@ mode = st.radio("View", _views, index=_want if _want is not None else 0,
 if mode == "Compare":
     peer_tickers, why_peers = suggest(ticker, sic=str(prof.get("sic") or ""))
 
+    # Anything the reader adds themselves. Kept per company, so moving to a
+    # different page does not carry someone else's comparison along with it.
+    added_key = f"added_{cik}"
+    added = st.session_state.setdefault(added_key, [])
+
+    box = st.container()
+    typed = box.text_input(
+        "Add a company", placeholder="Ticker, e.g. COST",
+        key=f"addbox_{cik}", label_visibility="collapsed").strip().upper()
+    handled_key = f"addseen_{cik}"
+    if typed and typed == st.session_state.get(handled_key):
+        typed = ""
+
+    if typed and typed != ticker.upper() and typed not in added:
+        try:
+            found = search(typed)
+        except Exception:
+            found = []
+        st.session_state[handled_key] = typed
+        if found:
+            added.append(found[0]["ticker"].upper())
+            st.session_state[added_key] = added
+            st.rerun()
+        else:
+            box.caption(f"Nothing on the SEC matches “{E(typed)}”.")
+
+    if added:
+        cols = st.columns(min(len(added), 5))
+        for col, tk in zip(cols, list(added)):
+            if col.button(f"✕ {tk}", key=f"rm_{cik}_{tk}", use_container_width=True):
+                st.session_state[added_key] = [x for x in added if x != tk]
+                st.rerun()
+        box.caption("Tap a name to remove it.")
+
+    # The reader's own picks come first, then the suggested set, without
+    # duplicating anything already present.
+    seen_tk = {ticker.upper()}
+    peer_tickers = [t for t in added + list(peer_tickers)
+                    if not (t.upper() in seen_tk or seen_tk.add(t.upper()))]
+    if added:
+        why_peers = ("Companies you added, alongside the suggested set."
+                     if len(peer_tickers) > len(added) else "Companies you added.")
+
     if not peer_tickers:
         industry = prof.get("industry") or ""
         st.markdown(
@@ -1675,8 +1718,9 @@ if mode == "Compare":
                "of unrelated businesses." if industry else ".")
             + "</p><p class=\'fbody\' style=\'margin-top:.6rem\'>Comparing against the "
             "wrong companies is worse than not comparing at all, so the tool declines "
-            "rather than filling the table with whatever shares a code. Research and "
-            "Teach me work as normal.</p></div>", unsafe_allow_html=True)
+            "rather than filling the table with whatever shares a code. "
+            "<b>Add a ticker above to compare against whichever companies you "
+            "choose.</b></p></div>", unsafe_allow_html=True)
     else:
         rows = []
         for tk in [ticker] + peer_tickers:
