@@ -725,6 +725,11 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 .horiz.mid{background:rgba(169,139,255,.14);color:var(--acc)}
 .horiz.near{background:rgba(95,214,155,.13);color:var(--up)}
 
+
+.est{font-family:var(--mono);font-size:.86rem;font-weight:700;color:#FFFFFF;
+  display:inline-flex;flex-direction:column;line-height:1.25}
+.est i{font-style:normal;font-size:.62rem;font-weight:600;color:var(--text-3)}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -936,6 +941,15 @@ def facts(cik: str):
 @st.cache_data(show_spinner=False)
 def profile(cik: str):
     return client.company_profile(cik)
+
+
+@st.cache_data(show_spinner=False, ttl=21_600)
+def next_estimate(ticker: str):
+    """The nearest quarter with an estimate but no reported figure."""
+    try:
+        return prices.next_estimate(ticker)
+    except Exception:
+        return None
 
 
 @st.cache_data(show_spinner=False, ttl=21_600)
@@ -1674,6 +1688,16 @@ if mode == "Compare":
                 pdy = (100 * pdps / pprice) if (pdps and pprice) else 0.0
                 phist = prices.monthly(h["ticker"]) if prices.has_history else []
                 pcagr = annualised(phist)
+
+                # Growth actually reported last year, and the record against
+                # what analysts expected. Both are facts about what happened,
+                # which is a firmer basis for an ordering than an assumption
+                # about what will.
+                prseries = peq.series("revenue")
+                pgrowth = None
+                if len(prseries) >= 2 and prseries[-2][1]:
+                    pgrowth = 100 * (prseries[-1][1] / prseries[-2][1] - 1)
+                pnext = next_estimate(h["ticker"])
                 rows.append({
                     "self": h["cik"] == cik,
                     "ticker": h["ticker"],
@@ -1686,6 +1710,8 @@ if mode == "Compare":
                     "dy": pdy,
                     "cagr": pcagr,
                     "years": (len(phist[-120:]) / 12) if phist else 0,
+                    "growth": pgrowth,
+                    "next": pnext,
                 })
             except Exception:
                 continue
@@ -1697,32 +1723,43 @@ if mode == "Compare":
             st.caption("A comparison needs a share price and positive earnings for at "
                        "least two companies.")
         else:
-            scored.sort(key=lambda r: r["pct"], reverse=True)
+            # Ordered by revenue growth actually reported last year. Companies
+            # without two filed years fall to the bottom rather than being
+            # ranked on a number that does not exist.
+            scored.sort(key=lambda r: (r["growth"] is not None, r["growth"] or 0),
+                        reverse=True)
 
 
             # Short on purpose. The number is the least obvious thing on the
             # page, so it needs one plain sentence and one worked figure --
             # not a lesson.
             st.markdown(
-                '<div class="explain"><p><b>Paying for future growth</b> is the share '
-                "of the price buying profits the company has not earned yet. At 80%, "
-                "only 20 cents of every dollar is backed by profit already "
-                "reported.</p></div>", unsafe_allow_html=True)
+                '<div class="explain"><p><b>Ranked by how much sales actually grew last '
+                "year.</b> <b>Expected next quarter</b> is what analysts predict for "
+                "earnings per share in the quarter still to be reported — a forecast, "
+                "not a filed figure.</p></div>", unsafe_allow_html=True)
 
             any_return = any(r["cagr"] is not None for r in scored)
-            head = ("<tr><th>#</th><th>Company</th><th>Paying for future growth</th>"
-                    "<th>Time to prove it</th>"
+            any_next = any(r["next"] for r in scored)
+            head = ("<tr><th>#</th><th>Company</th><th>Sales growth</th>"
                     + ("<th>Price return a year</th>" if any_return else "")
+                    + ("<th>Expected next quarter</th>" if any_next else "")
                     + "<th>P/E</th></tr>")
             body = ""
             for rank, r in enumerate(scored, start=1):
-                bar = (f'<span class="pbar"><i style="width:{r["pct"]:.0f}%"></i></span>')
+                if r["growth"] is None:
+                    grow = '<span class="ret none">—</span>'
+                else:
+                    up = r["growth"] >= 0
+                    grow = (f'<span class="ret {"up" if up else "down"}">'
+                            f'{r["growth"]:+,.1f}%</span>')
 
-                # How long the growth in the price has to take to arrive. A
-                # description of the share, not a holding period for the reader.
-                hz = (("far", "years") if r["pct"] >= 60 else
-                      ("mid", "a few years") if r["pct"] >= 30 else
-                      ("near", "priced on today"))
+                if r["next"]:
+                    nq = r["next"]
+                    nxt = (f'<span class="est">{D}{nq["estimate"]:,.2f}'
+                           f'<i>Q{nq["quarter"]} {nq["year"]}</i></span>')
+                else:
+                    nxt = '<span class="ret none">—</span>'
 
                 # Green above the market's long-run average, red below. The
                 # comparison is against the index because that is the
@@ -1740,21 +1777,26 @@ if mode == "Compare":
                     + (f'<span class="mini {"up" if r["day"] >= 0 else "down"}">'
                        f'{"▲" if r["day"] >= 0 else "▼"}{abs(r["day"]):.2f}%</span>'
                        if r["day"] is not None else "")
-                    + f'</td><td>{r["pct"]:.0f}% {bar}</td>'
-                    + f'<td><span class="horiz {hz[0]}">{hz[1]}</span></td>'
+                    + f"</td><td>{grow}</td>"
                     + (f"<td>{ret}</td>" if any_return else "")
+                    + (f"<td>{nxt}</td>" if any_next else "")
                     + f'<td>{r["pe"]:,.1f}×</td>'
                     + "</tr>")
             st.markdown(f'<div class="panel"><table class="comp cmp">'
                         f"<thead>{head}</thead><tbody>{body}</tbody></table></div>",
                         unsafe_allow_html=True)
 
-            top, bottom = scored[0], scored[-1]
+            top = scored[0]
+            note = ""
+            if top["growth"] is not None:
+                note = (f'<b>{E(top["name"])}</b> grew sales fastest last year, at '
+                        f'<b>{top["growth"]:+,.1f}%</b>. ')
             st.markdown(
-                f'<div class="readout"><p><b>{E(top["name"])}</b> has the most to prove '
-                f'at <b>{top["pct"]:.0f}%</b>; <b>{E(bottom["name"])}</b> the least at '
-                f'<b>{bottom["pct"]:.0f}%</b>. Neither is better — the number says what '
-                "has been assumed, not whether it is right.</p></div>",
+                f'<div class="readout"><p>{note}<b>Growing fastest is not the same as '
+                "being the better buy.</b> A company already expected to grow has to "
+                "keep delivering; a slower one may need very little to go right. "
+                "Estimates are analysts' opinions, not filings — and companies guide "
+                "them toward a number they are confident of clearing.</p></div>",
                 unsafe_allow_html=True)
 
             others = [r for r in scored if not r["self"]]
@@ -2213,7 +2255,7 @@ st.markdown(f'''<div class="panel">
 # -- so the section says where they came from and what a run of beats does and
 # does not mean.
 
-surp = surprises(ticker)
+surp = [r for r in surprises(ticker) if r.get("actual") is not None][:4]
 if surp:
     sh("Expected against reported", "analyst estimates, not filings")
     rows = ""
