@@ -29,11 +29,12 @@ CURATED: dict[str, list[str]] = {
     "COST": ["WMT", "TGT", "KR"],
     "KR": ["ACI", "WMT", "COST"],
     "ACI": ["KR", "WMT", "COST"],
-    # Apparel and footwear
-    "NKE": ["LULU", "SKX", "UAA"],
-    "LULU": ["NKE", "UAA", "SKX"],
-    "SKX": ["NKE", "UAA", "LULU"],
-    "UAA": ["NKE", "SKX", "LULU"],
+    # Apparel and footwear. Peers are checked for still filing -- a company
+    # taken private stops filing and can never resolve, so it would silently
+    # shorten every comparison it appears in.
+    "NKE": ["LULU", "UAA", "DECK"],
+    "LULU": ["NKE", "DECK", "UAA"],
+        "UAA": ["NKE", "LULU", "DECK"],
     # Restaurants
     "SBUX": ["MCD", "CMG", "YUM"],
     "MCD": ["SBUX", "YUM", "CMG"],
@@ -63,7 +64,7 @@ CURATED: dict[str, list[str]] = {
     # Payments
     "V": ["MA", "AXP", "PYPL"],
     "MA": ["V", "AXP", "PYPL"],
-    "PYPL": ["V", "MA", "SQ"],
+    "PYPL": ["V", "MA", "AXP"],
     # Airlines
     "DAL": ["UAL", "AAL", "LUV"],
     "UAL": ["DAL", "AAL", "LUV"],
@@ -72,7 +73,7 @@ CURATED: dict[str, list[str]] = {
     # Autos
     "F": ["GM", "TSLA", "STLA"],
     "GM": ["F", "TSLA", "STLA"],
-    "TSLA": ["GM", "F", "RIVN"],
+    "TSLA": ["GM", "F", "LCID"],
     # Beverages and staples
     "KO": ["PEP", "MNST", "KDP"],
     "PEP": ["KO", "MNST", "KDP"],
