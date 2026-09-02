@@ -996,6 +996,48 @@ def test_quarter_labels_by_fiscal_month():
     print("fiscal quarter labels ok")
 
 
+
+
+def test_surprises():
+    """Analyst estimates against reported figures. Must degrade like prices."""
+    import json as _json
+    import pathlib, tempfile
+    from prices import PriceClient
+
+    tmp = pathlib.Path(tempfile.mkdtemp())
+
+    # No key: empty, never an exception. This is not filing data, so its
+    # absence must never break a page built on filings.
+    assert PriceClient(api_key="", cache_dir=tmp).surprises("NKE") == []
+    assert PriceClient(api_key="x", cache_dir=tmp).surprises("") == []
+
+    (tmp / "e_NKE.json").write_text(_json.dumps([
+        {"period": "2026-06-30", "quarter": 4, "year": 2026,
+         "estimate": 0.1332, "actual": 0.20, "surprise_pct": 50.15},
+        {"period": "2026-03-31", "quarter": 3, "year": 2026,
+         "estimate": 0.2848, "actual": 0.35, "surprise_pct": 22.9},
+        {"period": "2025-12-31", "quarter": 2, "year": 2026,
+         "estimate": 0.63, "actual": 0.55, "surprise_pct": -12.7},
+    ]))
+    got = PriceClient(api_key="x", cache_dir=tmp).surprises("NKE")
+    assert len(got) == 3
+    assert got[0]["period"] == "2026-06-30", "newest quarter first"
+    assert got[0]["actual"] > got[0]["estimate"], "a beat"
+    assert got[2]["actual"] < got[2]["estimate"], "a miss"
+
+    # The limit is respected, so a long history cannot flood the page.
+    assert len(PriceClient(api_key="x", cache_dir=tmp).surprises("NKE", limit=2)) == 2
+
+    # A malformed cache yields nothing rather than half-built rows. This
+    # matters because the file can outlive the code that wrote it.
+    (tmp / "e_BAD.json").write_text(_json.dumps("not a list"))
+    (tmp / "e_MIX.json").write_text(_json.dumps([{"period": "2026-06-30"}, "junk", 7]))
+    c = PriceClient(api_key="x", cache_dir=tmp)
+    assert c.surprises("BAD") == []
+    assert c.surprises("MIX") == [{"period": "2026-06-30"}]
+    print("surprises ok")
+
+
 def main():
     test_clean()
     test_valuation()
@@ -1005,6 +1047,7 @@ def main():
     test_scorecard()
     test_prices()
     test_history()
+    test_surprises()
     test_filing_text()
     test_risk_junk_rejected()
     test_span_picks_real_section()
