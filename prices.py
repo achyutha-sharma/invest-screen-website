@@ -104,14 +104,16 @@ class PriceClient:
         out = []
         for row in data:
             est, act = row.get("estimate"), row.get("actual")
-            if est is None or act is None:
+            if est is None:
                 continue
             out.append({
                 "period": str(row.get("period", ""))[:10],
                 "quarter": row.get("quarter"),
                 "year": row.get("year"),
                 "estimate": float(est),
-                "actual": float(act),
+                # None means the quarter has not been reported yet, which
+                # makes this row the forward expectation rather than history.
+                "actual": None if act is None else float(act),
                 "surprise_pct": row.get("surprisePercent"),
             })
 
@@ -119,6 +121,13 @@ class PriceClient:
         if out:
             self._store(f"e_{sym}.json", out)
         return out[:limit]
+
+    def next_estimate(self, ticker: str) -> dict | None:
+        """The nearest quarter that has an estimate but no reported figure."""
+        rows = [r for r in self.surprises(ticker, limit=12)
+                if r.get("actual") is None]
+        rows.sort(key=lambda r: r["period"])
+        return rows[0] if rows else None
 
     @property
     def configured(self) -> bool:
@@ -278,3 +287,4 @@ class PriceClient:
             if best is not None and gap is not None and gap <= 45:
                 out[label] = best
         return out
+        
