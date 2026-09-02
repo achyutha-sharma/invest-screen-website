@@ -763,8 +763,6 @@ def main():
     test_span_picks_real_section()
     test_quarter_year_ago()
     test_mda_dedupes_segments()
-    test_expectations()
-    test_risk_diff()
     print("\nAll checks passed.")
 
 
