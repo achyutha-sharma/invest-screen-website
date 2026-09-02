@@ -14,7 +14,7 @@ is missing, rather than the page falling over.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 
 from sec_ratios import (
     DA,
@@ -350,6 +350,62 @@ def _derive_equity(store: EquityStore, p: Period, end: date) -> None:
             note("gross_profit", rev - cost, "revenue less cost of revenue")
 
 
+def _quarter_spans(store: EquityStore, latest_fy_end: date, chain) -> dict[date, float]:
+    """Quarterly figures for the current year, by period end.
+
+    Some filers tag every quarter as a three-month span. Others tag only the
+    running year-to-date total, so the second quarter arrives as a 181-day
+    span and the third as 273 -- and a filter looking for three-month periods
+    finds exactly one quarter and reports the company as having filed once.
+
+    Where a quarter is not tagged directly it is derived by differencing the
+    year-to-date figures, which is arithmetic on filed numbers rather than an
+    estimate. Direct tags always win.
+    """
+    direct: dict[date, tuple[str, float]] = {}
+    ytd: dict[date, tuple[str, float]] = {}
+
+    for tag in chain:
+        for e in store._gaap.get(tag, {}).get("units", {}).get("USD", []):
+            if not e.get("start"):
+                continue
+            form = str(e.get("form", ""))
+            if not (form.startswith("10-Q") or form.startswith("10-K")):
+                continue
+            end = _parse(e["end"])
+            if end <= latest_fy_end:
+                continue
+            start = _parse(e["start"])
+            span = (end - start).days
+            filed = str(e.get("filed", ""))
+
+            if 60 <= span <= 110:
+                if end not in direct or filed > direct[end][0]:
+                    direct[end] = (filed, float(e["val"]))
+            elif 150 <= span <= 400 and start <= latest_fy_end + timedelta(days=20):
+                # A cumulative period running from the start of the fiscal year.
+                if end not in ytd or filed > ytd[end][0]:
+                    ytd[end] = (filed, float(e["val"]))
+
+    out = {end: val for end, (_, val) in direct.items()}
+
+    # Fill gaps by differencing consecutive year-to-date totals.
+    if ytd:
+        marks = sorted(ytd)
+        running = dict(out)
+        for i, end in enumerate(marks):
+            if end in out:
+                continue
+            total = ytd[end][1]
+            earlier = sum(v for e2, v in running.items() if e2 < end)
+            if i == 0 or earlier:
+                derived = total - earlier
+                if derived > 0:
+                    out[end] = derived
+                    running[end] = derived
+    return out
+
+
 def _current_year_quarters(store: EquityStore, latest_fy_end: date) -> list[Period]:
     """Quarters filed since the last annual report closed.
 
@@ -357,30 +413,21 @@ def _current_year_quarters(store: EquityStore, latest_fy_end: date) -> list[Peri
     so this is how far through the current year it is -- the basis for the
     run-rate rather than any forecast.
     """
-    rows = []
-    for tag in REVENUE:
-        blocks = store._gaap.get(tag, {}).get("units", {}).get("USD", [])
-        for e in blocks:
-            if not e.get("start") or not str(e.get("form", "")).startswith("10-Q"):
-                continue
-            end = _parse(e["end"])
-            if end <= latest_fy_end:
-                continue
-            span = (end - _parse(e["start"])).days
-            if 60 <= span <= 110:
-                rows.append((end, e))
-        if rows:
-            break
-
-    best: dict[date, dict] = {}
-    for end, e in rows:
-        if end not in best or e.get("filed", "") > best[end].get("filed", ""):
-            best[end] = e
+    revenue = _quarter_spans(store, latest_fy_end, REVENUE)
+    if not revenue:
+        return []
 
     out = []
-    for i, end in enumerate(sorted(best), start=1):
-        p = Period(end=end, fy=end.year, fp=f"Q{i}")
-        p.inputs["revenue"] = float(best[end]["val"])
+    for end in sorted(revenue):
+        # Numbered by where the quarter falls in the fiscal year, not by the
+        # order it was found. A company missing its first quarter used to have
+        # its second labelled Q1, which then compared against the wrong
+        # quarter a year earlier.
+        months = (end.year - latest_fy_end.year) * 12 + (end.month - latest_fy_end.month)
+        qn = max(1, min(4, (months + 2) // 3))
+
+        p = Period(end=end, fy=end.year, fp=f"Q{qn}")
+        p.inputs["revenue"] = revenue[end]
         p.sources["revenue"] = "10-Q"
         for key, chain in (("net_income", NET_INCOME), ("ebit", OPERATING_INCOME)):
             tag, val = store.quarterly(chain, end)
@@ -388,9 +435,13 @@ def _current_year_quarters(store: EquityStore, latest_fy_end: date) -> list[Peri
         tag, val = store.per_share(EPS_DILUTED, end, quarterly=True)
         p.inputs["eps"], p.sources["eps"] = val, tag or MISSING
 
-        # The equivalent quarter a year earlier. 365 days back lands within a
-        # few days of the same fiscal quarter end for every calendar.
-        prior = date(end.year - 1, end.month, min(end.day, 28))
+        # The same quarter a year earlier. Fiscal calendars drift by a few days
+        # a year -- a 52/53-week year moves the quarter end by up to a week --
+        # so this is an approximate date and the lookup tolerates the gap.
+        try:
+            prior = end.replace(year=end.year - 1)
+        except ValueError:                     # 29 February
+            prior = end.replace(year=end.year - 1, day=28)
         for key, chain in (("revenue", REVENUE), ("net_income", NET_INCOME),
                            ("ebit", OPERATING_INCOME)):
             _, val = store.quarterly(chain, prior)
