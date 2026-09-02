@@ -17,6 +17,7 @@ from datetime import date
 
 import expectations as expect
 from filing_text import latest_filings, read_filing
+import ranking
 from peers import suggest
 import funds as funds_data
 from prices import PriceClient
@@ -729,6 +730,24 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 .est{font-family:var(--mono);font-size:.86rem;font-weight:700;color:#FFFFFF;
   display:inline-flex;flex-direction:column;line-height:1.25}
 .est i{font-style:normal;font-size:.62rem;font-weight:600;color:var(--text-3)}
+
+
+.nomatch{font-size:.84rem;color:var(--text-2);line-height:1.6;max-width:70ch;
+  background:rgba(240,196,106,.07);border:1px solid #4E3E1E;border-radius:8px;
+  padding:.7rem .9rem;margin:.2rem 0 .6rem}
+.nomatch b{color:#FFFFFF;font-weight:700}
+
+
+.mark{font-family:var(--mono);font-size:.95rem;font-weight:700;padding:.12rem .5rem;
+  border-radius:11px}
+.mark.up{background:rgba(95,214,155,.15);color:var(--up)}
+.mark.mid{background:rgba(169,139,255,.15);color:var(--acc)}
+.mark.down{background:rgba(255,123,138,.13);color:var(--down)}
+.wtable td,.wtable th{font-size:.82rem}
+.wtable td.wgt{font-family:var(--mono);color:var(--acc);text-align:right}
+.wtable td.meas{text-align:left;font-family:'Archivo',sans-serif;font-weight:400;
+  color:var(--text-2)}
+.wtable td:first-child,.wtable th:first-child{text-align:left}
 
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
@@ -1689,7 +1708,12 @@ if mode == "Compare":
         except Exception:
             found = []
         if not found:
-            box.caption(f"Nothing on the SEC matches “{E(typed)}”.")
+            box.markdown(
+                f'<p class="nomatch">Nothing on the SEC matches “{E(typed)}”. '
+                "<b>Only companies that file with the SEC are covered</b> — a company "
+                "listed abroad, such as adidas or Nestlé, files with its own regulator "
+                "instead, so there are no filings here to read.</p>",
+                unsafe_allow_html=True)
         else:
             hits = [h for h in found
                     if h["ticker"].upper() not in added
@@ -1705,16 +1729,19 @@ if mode == "Compare":
                         st.session_state[handled_key] = typed.upper()
                         st.rerun()
 
-    if added:
+    # Named in full, since a ticker is only obvious once you already know it.
+    chips = []
+    for tk in list(added):
+        try:
+            chips.append((tk, search(tk)[0]["name"].title()))
+        except Exception:
+            chips.append((tk, tk))
+
+    if chips:
         box.markdown('<p class="picker">Added — tap to remove</p>',
                      unsafe_allow_html=True)
-        cols = st.columns(min(len(added), 4))
-        for col, tk in zip(cols, list(added)):
-            # Named in full, since a ticker is only obvious once you know it.
-            try:
-                nm = search(tk)[0]["name"].title()
-            except Exception:
-                nm = tk
+        cols = st.columns(min(len(chips), 4))
+        for col, (tk, nm) in zip(cols, chips):
             if col.button(f"✕  {nm}", key=f"rm_{cik}_{tk}", use_container_width=True):
                 st.session_state[added_key] = [x for x in added if x != tk]
                 st.session_state.pop(handled_key, None)
@@ -1755,7 +1782,6 @@ if mode == "Compare":
                 pl = peq.latest
                 peps = pl.get("eps")
                 pprice = pq.price if pq.available else None
-                split = expect.expectations(pprice, peps)
                 pni, prev = pl.get("net_income"), pl.get("revenue")
                 pdps = pl.get("dps")
                 pdy = (100 * pdps / pprice) if (pdps and pprice) else 0.0
@@ -1771,13 +1797,37 @@ if mode == "Compare":
                 if len(prseries) >= 2 and prseries[-2][1]:
                     pgrowth = 100 * (prseries[-1][1] / prseries[-2][1] - 1)
                 pnext = next_estimate(h["ticker"])
+                pl_all = peq.years
+                def _ser(key):
+                    return [p.get(key) for p in pl_all if p.get(key) is not None]
+
+                pebitda = None
+                if pl.get("ebit") is not None:
+                    pebitda = pl.get("ebit") + (pl.get("da") or 0)
+                pfcf = [a - b for a, b in
+                        zip([p.get("ocf") for p in pl_all],
+                            [p.get("capex") for p in pl_all])
+                        if a is not None and b is not None]
+
+                figs = ranking.Figures(
+                    ticker=h["ticker"], name=peq.entity.split(",")[0].title(),
+                    cik=h["cik"], price=pprice, eps=peps, shares=pl.get("shares"),
+                    revenue=_ser("revenue"), net_income=_ser("net_income"),
+                    fcf=pfcf, ebit=pl.get("ebit"), ebitda=pebitda,
+                    ocf=pl.get("ocf"), debt=pl.get("total_debt"),
+                    cash=pl.get("cash"), equity=pl.get("equity"),
+                    interest=pl.get("interest"),
+                    current_assets=pl.get("current_assets"),
+                    current_liabilities=pl.get("current_liabilities"),
+                    dps=pl.get("dps"), buybacks=pl.get("buybacks"))
+
                 rows.append({
+                    "figs": figs,
                     "self": h["cik"] == cik,
                     "ticker": h["ticker"],
                     "cik": h["cik"],
                     "name": peq.entity.split(",")[0].title(),
                     "pe": (pprice / peps) if (pprice and peps and peps > 0) else None,
-                    "pct": split.pct if split else None,
                     "margin": (100 * pni / prev) if (pni is not None and prev) else None,
                     "day": pq.day_change_pct,
                     "dy": pdy,
@@ -1789,17 +1839,27 @@ if mode == "Compare":
             except Exception:
                 continue
 
-        scored = [r for r in rows if r["pct"] is not None]
+        scored = [r for r in rows if r["pe"] is not None]
         if len(scored) < 2:
             st.markdown('<p class="lead">Not enough priced peers to compare.</p>',
                         unsafe_allow_html=True)
             st.caption("A comparison needs a share price and positive earnings for at "
-                       "least two companies.")
+                       "least two companies. A loss-making company has no P/E to "
+                       "compare, so it is left out rather than shown as zero.")
         else:
-            # Ordered by revenue growth actually reported last year. Companies
-            # without two filed years fall to the bottom rather than being
-            # ranked on a number that does not exist.
-            scored.sort(key=lambda r: (r["growth"] is not None, r["growth"] or 0),
+            # A weighted score across six components, each ranked against the
+            # other companies in this comparison rather than a fixed
+            # threshold -- what counts as a normal multiple or a good margin
+            # differs completely between industries.
+            marks = {m.ticker: m for m in
+                     ranking.rank([r["figs"] for r in scored])}
+            for r in scored:
+                m = marks.get(r["ticker"])
+                r["score"] = m.total if m else None
+                r["parts"] = m.components if m else {}
+                r["missing"] = m.missing if m else []
+
+            scored.sort(key=lambda r: (r["score"] is not None, r["score"] or 0),
                         reverse=True)
 
 
@@ -1807,19 +1867,27 @@ if mode == "Compare":
             # page, so it needs one plain sentence and one worked figure --
             # not a lesson.
             st.markdown(
-                '<div class="explain"><p><b>Ranked by how much sales actually grew last '
-                "year.</b> <b>Expected next quarter</b> is what analysts predict for "
-                "earnings per share in the quarter still to be reported — a forecast, "
-                "not a filed figure.</p></div>", unsafe_allow_html=True)
+                '<div class="explain"><p><b>Scored out of 100 against each other</b>, '
+                "not against a fixed standard — a normal margin for a supermarket is a "
+                "terrible one for software, so the peer set is the only fair "
+                "benchmark.</p></div>", unsafe_allow_html=True)
 
             any_return = any(r["cagr"] is not None for r in scored)
             any_next = any(r["next"] for r in scored)
-            head = ("<tr><th>#</th><th>Company</th><th>Sales growth</th>"
+            head = ("<tr><th>#</th><th>Company</th><th>Score</th>"
+                    "<th>Sales growth</th>"
                     + ("<th>Price return a year</th>" if any_return else "")
                     + ("<th>Expected next quarter</th>" if any_next else "")
                     + "<th>P/E</th></tr>")
             body = ""
             for rank, r in enumerate(scored, start=1):
+                if r["score"] is None:
+                    mark = '<span class="ret none">too little filed</span>'
+                else:
+                    band = ("up" if r["score"] >= 60 else
+                            "down" if r["score"] < 40 else "mid")
+                    mark = f'<span class="mark {band}">{r["score"]:.0f}</span>'
+
                 if r["growth"] is None:
                     grow = '<span class="ret none">—</span>'
                 else:
@@ -1850,7 +1918,7 @@ if mode == "Compare":
                     + (f'<span class="mini {"up" if r["day"] >= 0 else "down"}">'
                        f'{"▲" if r["day"] >= 0 else "▼"}{abs(r["day"]):.2f}%</span>'
                        if r["day"] is not None else "")
-                    + f"</td><td>{grow}</td>"
+                    + f"</td><td>{mark}</td><td>{grow}</td>"
                     + (f"<td>{ret}</td>" if any_return else "")
                     + (f"<td>{nxt}</td>" if any_next else "")
                     + f'<td>{r["pe"]:,.1f}×</td>'
@@ -1861,9 +1929,12 @@ if mode == "Compare":
 
             top = scored[0]
             note = ""
-            if top["growth"] is not None:
-                note = (f'<b>{E(top["name"])}</b> grew sales fastest last year, at '
-                        f'<b>{top["growth"]:+,.1f}%</b>. ')
+            if top["score"] is not None:
+                best = max((k for k, v in top["parts"].items() if v is not None),
+                           key=lambda k: top["parts"][k], default=None)
+                note = (f'<b>{E(top["name"])}</b> scores highest overall'
+                        + (f', strongest on <b>{E(ranking.LABELS[best].lower())}</b>. '
+                           if best else ". "))
             st.markdown(
                 f'<div class="readout"><p>{note}<b>Growing fastest is not the same as '
                 "being the better buy.</b> A company already expected to grow has to "
@@ -1871,6 +1942,48 @@ if mode == "Compare":
                 "Estimates are analysts' opinions, not filings — and companies guide "
                 "them toward a number they are confident of clearing.</p></div>",
                 unsafe_allow_html=True)
+
+            with st.expander("What goes into the score"):
+                rows_ = "".join(
+                    f'<tr><td>{E(ranking.LABELS[k])}</td>'
+                    f'<td class="wgt">{ranking.WEIGHTS[k]}%</td>'
+                    f'<td class="meas">{E(ranking.MEASURES[k])}</td></tr>'
+                    for k in ranking.WEIGHTS)
+                st.markdown(
+                    '<table class="comp wtable"><thead><tr><th>Component</th>'
+                    "<th>Weight</th><th>Measured by</th></tr></thead>"
+                    f"<tbody>{rows_}</tbody></table>", unsafe_allow_html=True)
+                st.markdown(
+                    "Each measure is ranked against the other companies shown, then "
+                    "averaged into its component and weighted as above.\n\n"
+                    "**A figure a company does not file is skipped, not counted "
+                    "against it** — the remaining components are reweighted instead. A "
+                    "company missing more than half the picture gets no score at all "
+                    "rather than a misleading one.\n\n"
+                    "**The weights are a judgement, not a law.** They are shown so you "
+                    "can disagree with them. A score is a summary of what has already "
+                    "been filed — it does not predict a share price.")
+
+            parts_rows = [r for r in scored if r["parts"]]
+            if parts_rows:
+                with st.expander("Score by component"):
+                    hdr = "".join(f"<th>{E(ranking.LABELS[k])}</th>"
+                                  for k in ranking.WEIGHTS)
+                    brows = ""
+                    for r in parts_rows:
+                        cells = ""
+                        for k in ranking.WEIGHTS:
+                            v = r["parts"].get(k)
+                            cells += ("<td>—</td>" if v is None else
+                                      f'<td>{v:.0f}</td>')
+                        brows += (f'<tr><td>{E(r["name"])}</td>{cells}</tr>')
+                    st.markdown(
+                        '<div style="overflow-x:auto"><table class="comp wtable">'
+                        f"<thead><tr><th>Company</th>{hdr}</tr></thead>"
+                        f"<tbody>{brows}</tbody></table></div>",
+                        unsafe_allow_html=True)
+                    st.caption("Each column is 0-100 against the others shown. A dash "
+                               "means the filings did not contain enough to score it.")
 
             others = [r for r in scored if not r["self"]]
             if others:
@@ -1887,10 +2000,8 @@ if mode == "Compare":
 
             st.caption(
                 why_peers
-                + " A share price is split against a no-growth multiple of 10x — a rough "
-                "marker for what a business with no growth ahead of it would fetch, not a "
-                f"target. Returns are price only and are green above {MARKET_LONG_RUN:.0f}% "
-                "a year, roughly what the S&P 500 has averaged over decades; dividends are "
+                + f" Returns are price only and are green above {MARKET_LONG_RUN:.0f}% a "
+                "year, roughly what the S&P 500 has averaged over decades; dividends are "
                 "not included, so a company paying one has returned more than shown. Past "
                 "returns say nothing about future ones.")
 
