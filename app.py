@@ -1666,9 +1666,17 @@ if mode == "Compare":
     peer_tickers, why_peers = suggest(ticker, sic=str(prof.get("sic") or ""))
 
     if not peer_tickers:
-        st.markdown('<p class="lead">No comparison set is available for this company.</p>',
-                    unsafe_allow_html=True)
-        st.caption(why_peers)
+        industry = prof.get("industry") or ""
+        st.markdown(
+            '<div class="panel"><p class="fbody"><b>No comparison is available for this '
+            "company yet.</b> Peers are hand-checked rather than guessed from the SEC's "
+            "industry code, because that code is often too broad to be useful"
+            + (f' — this company is filed under “{E(industry)}”, which covers hundreds '
+               "of unrelated businesses." if industry else ".")
+            + "</p><p class=\'fbody\' style=\'margin-top:.6rem\'>Comparing against the "
+            "wrong companies is worse than not comparing at all, so the tool declines "
+            "rather than filling the table with whatever shares a code. Research and "
+            "Teach me work as normal.</p></div>", unsafe_allow_html=True)
     else:
         rows = []
         for tk in [ticker] + peer_tickers:
