@@ -874,8 +874,10 @@ def search(q: str):
     return client.search(q)
 
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=21_600)
 def facts(cik: str):
+    """Cached for six hours: a company filing a new quarter must show up
+    without waiting for a redeploy."""
     return client.company_facts(cik)
 
 
