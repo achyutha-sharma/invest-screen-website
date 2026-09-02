@@ -934,13 +934,20 @@ def peer_score(tick: str, cik_: str, sic: str):
     figs = []
     for t in [tick] + list(tickers):
         b = company_bundle(t)
-        if b:
+        if not b:
+            continue
+        try:
             figs.append(figures_for(b["ticker"], b["eq"], b["eq"].latest,
                                     b["quote"], b["hist"]))
+        except Exception:
+            continue
 
     if len(figs) < 2:
         return None
-    marks = {m.ticker: m for m in ranking.rank(figs)}
+    try:
+        marks = {m.ticker: m for m in ranking.rank(figs)}
+    except Exception:
+        return None
     return marks.get(tick.upper()) or marks.get(figs[0].ticker)
 
 
