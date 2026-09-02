@@ -1146,6 +1146,48 @@ def test_ranking():
     alone = rank([strong])[0]
     assert all(v == 50.0 for v in alone.components.values() if v is not None)
 
+    # The working behind a score must be reportable and correct: every
+    # measure with its own figure, and a placing counted from how many
+    # companies actually did better.
+    from ranking import MEASURE_INFO, display_value
+
+    trio = rank([mk("CHEAP", price=40.0), mk("MID", price=100.0),
+                 mk("RICH", price=260.0)])
+    cheap = next(s for s in trio if s.ticker == "CHEAP")
+    val = {r["attr"]: r for r in cheap.detail["valuation"]}
+    assert val["pe"]["place"] == 1, val["pe"]
+    assert val["pe"]["score"] == 100
+    assert "8.0" in val["pe"]["value"], val["pe"]["value"]
+
+    rich = next(s for s in trio if s.ticker == "RICH")
+    assert {r["attr"]: r for r in rich.detail["valuation"]}["pe"]["place"] == 3
+
+    # A tie is joint-placed: two companies sharing second must both read
+    # second, not second and third.
+    four = rank([mk("A", price=40.0), mk("B", price=100.0),
+                 mk("C", price=100.0), mk("D", price=260.0)])
+    places = {s.ticker: {r["attr"]: r for r in s.detail["valuation"]}["pe"]
+              for s in four}
+    assert places["A"]["place"] == 1
+    assert places["B"]["place"] == places["C"]["place"] == 2, places
+    assert places["B"]["shared"] == 2
+    assert places["D"]["place"] == 4, "the placing after a joint second is fourth"
+
+    # Every measure needs a label, a format and an explanation, or the working
+    # shows a bare attribute name.
+    for _comp, _measures in COMPONENTS.items():
+        for attr, _ in _measures:
+            assert attr in MEASURE_INFO, attr
+            label, fmt, what = MEASURE_INFO[attr]
+            assert label and fmt and len(what) > 10, attr
+
+    # Negated measures are displayed with the sign flipped back, or a margin
+    # spread of 4 points would read as -4.
+    steady = mk("STEADY")
+    assert steady.margin_stability < 0, "stored negated"
+    assert not display_value("margin_stability",
+                             steady.margin_stability).startswith("-")
+
     # Equal companies must score equally, or the order is arbitrary.
     a, b = mk("A"), mk("B")
     tied = rank([a, b])
