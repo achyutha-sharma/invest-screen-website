@@ -798,6 +798,119 @@ def test_cache_expiry():
     print("cache expiry ok")
 
 
+
+
+def test_quarters_across_tags():
+    """Quarters must be found even when a filer changes revenue tag mid-year.
+
+    This was a real bug: the search stopped at the first revenue tag that
+    matched anything, so a company that filed Q1 under one tag and Q2 under
+    another showed only Q1 -- and the run-rate was built from a single
+    quarter as though the others had not been filed.
+    """
+    def q(y, qn, val, tag_rows, form="10-Q"):
+        starts = {1: f"{y}-01-01", 2: f"{y}-04-01", 3: f"{y}-07-01", 4: f"{y}-10-01"}
+        ends = {1: f"{y}-03-31", 2: f"{y}-06-30", 3: f"{y}-09-30", 4: f"{y}-12-31"}
+        tag_rows.append(dur(starts[qn], ends[qn], val, form=form, filed=f"{y}-12-01"))
+
+    old_tag, new_tag = [], []
+    # Prior year, for the year-ago comparison.
+    for qn, v in enumerate([3_800, 3_900, 4_000, 4_300], 1):
+        q(2025, qn, v, old_tag)
+    # This year: Q1 under the old tag, Q2 and Q3 under a different one.
+    q(2026, 1, 4_100, old_tag)
+    q(2026, 2, 4_300, new_tag)
+    q(2026, 3, 4_500, new_tag)
+
+    eq = extract_equity(build("TAG SWITCHER", {
+        "Revenues": {"units": {"USD": old_tag
+                               + [dur("2025-01-01", "2025-12-31", 16_000)]}},
+        "RevenueFromContractWithCustomerExcludingAssessedTax": {"units": {"USD": new_tag}},
+        "NetIncomeLoss": {"units": {"USD": [dur("2025-01-01", "2025-12-31", 1_600)]}},
+    }))
+
+    labels = [p.fp for p in eq.quarters]
+    assert labels == ["Q1", "Q2", "Q3"], labels
+    assert [p.get("revenue") for p in eq.quarters] == [4_100, 4_300, 4_500]
+
+    # The run-rate must use every filed quarter, not just the first tag's.
+    ytd = sum(p.get("revenue") for p in eq.quarters)
+    assert ytd == 12_900, ytd
+
+    # And each quarter compares against its own equivalent a year earlier.
+    assert eq.quarters[0].year_ago.get("revenue") == 3_800
+    assert eq.quarters[2].year_ago.get("revenue") == 4_000
+
+
+def test_quarter_numbering():
+    """A missing first quarter must not renumber the ones that follow."""
+    rows = [dur("2025-01-01", "2025-12-31", 16_000)]
+    # Only Q2 and Q3 filed -- Q1 absent from the data entirely.
+    rows.append(dur("2026-04-01", "2026-06-30", 4_300, form="10-Q", filed="2026-08-01"))
+    rows.append(dur("2026-07-01", "2026-09-30", 4_500, form="10-Q", filed="2026-11-01"))
+    # Their year-ago equivalents.
+    rows.append(dur("2025-04-01", "2025-06-30", 3_900, form="10-Q", filed="2025-08-01"))
+    rows.append(dur("2025-07-01", "2025-09-30", 4_000, form="10-Q", filed="2025-11-01"))
+
+    eq = extract_equity(build("GAPPY CO", {
+        "Revenues": {"units": {"USD": rows}},
+        "NetIncomeLoss": {"units": {"USD": [dur("2025-01-01", "2025-12-31", 1_600)]}},
+    }))
+
+    labels = [p.fp for p in eq.quarters]
+    assert labels == ["Q2", "Q3"], labels
+    # Q2 must compare against last year's Q2, not last year's Q1.
+    assert eq.quarters[0].year_ago.get("revenue") == 3_900, eq.quarters[0].year_ago
+    print("quarter tags and numbering ok")
+
+
+
+
+def test_quarters_from_ytd():
+    """Quarters must be derived when a filer tags only year-to-date totals.
+
+    This was the bug behind "1 of 4 quarters filed" for companies that had
+    plainly filed more: the second quarter arrives as a 181-day cumulative
+    span and the third as 273, so a filter looking for three-month periods
+    found only the first quarter and reported the rest as not yet filed.
+    """
+    rows = [dur("2025-01-01", "2025-12-31", 16_000)]
+    # Q1 tagged as a quarter; Q2 and Q3 only as running totals.
+    rows.append(dur("2026-01-01", "2026-03-31", 4_100, form="10-Q", filed="2026-05-01"))
+    rows.append(dur("2026-01-01", "2026-06-30", 8_400, form="10-Q", filed="2026-08-01"))
+    rows.append(dur("2026-01-01", "2026-09-30", 12_900, form="10-Q", filed="2026-11-01"))
+
+    eq = extract_equity(build("YTD ONLY", {
+        "Revenues": {"units": {"USD": rows}},
+        "NetIncomeLoss": {"units": {"USD": [dur("2025-01-01", "2025-12-31", 1_600)]}},
+    }))
+
+    assert [p.fp for p in eq.quarters] == ["Q1", "Q2", "Q3"], [p.fp for p in eq.quarters]
+    got = [p.get("revenue") for p in eq.quarters]
+    # 8,400 - 4,100 = 4,300 and 12,900 - 8,400 = 4,500.
+    assert got == [4_100, 4_300, 4_500], got
+
+    # A direct quarterly tag must win over anything derived.
+    rows2 = list(rows)
+    rows2.append(dur("2026-04-01", "2026-06-30", 4_275, form="10-Q", filed="2026-08-02"))
+    eq2 = extract_equity(build("BOTH TAGGED", {
+        "Revenues": {"units": {"USD": rows2}},
+        "NetIncomeLoss": {"units": {"USD": [dur("2025-01-01", "2025-12-31", 1_600)]}},
+    }))
+    assert eq2.quarters[1].get("revenue") == 4_275, "a filed quarter beats a derived one"
+
+    # A negative derivation is nonsense and must be dropped, not shown.
+    rows3 = [dur("2025-01-01", "2025-12-31", 16_000),
+             dur("2026-01-01", "2026-03-31", 5_000, form="10-Q", filed="2026-05-01"),
+             dur("2026-01-01", "2026-06-30", 4_000, form="10-Q", filed="2026-08-01")]
+    eq3 = extract_equity(build("SHRINKING", {
+        "Revenues": {"units": {"USD": rows3}},
+        "NetIncomeLoss": {"units": {"USD": [dur("2025-01-01", "2025-12-31", 1_600)]}},
+    }))
+    assert [p.fp for p in eq3.quarters] == ["Q1"], [p.fp for p in eq3.quarters]
+    print("ytd quarters ok")
+
+
 def main():
     test_clean()
     test_valuation()
@@ -813,6 +926,9 @@ def main():
     test_quarter_year_ago()
     test_mda_dedupes_segments()
     test_cache_expiry()
+    test_quarters_across_tags()
+    test_quarter_numbering()
+    test_quarters_from_ytd()
     print("\nAll checks passed.")
 
 
