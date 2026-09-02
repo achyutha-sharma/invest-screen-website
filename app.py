@@ -1706,7 +1706,8 @@ mode = st.radio("View", _views, index=_want if _want is not None else 0,
 # situation, which no filing can support.
 
 if mode == "Compare":
-    peer_tickers, why_peers = suggest(ticker, sic=str(prof.get("sic") or ""))
+    peer_tickers, (why_kind, why_peers) = suggest(
+        ticker, sic=str(prof.get("sic") or ""))
 
     # Anything the reader adds themselves. Kept per company, so moving to a
     # different page does not carry someone else's comparison along with it.
@@ -1779,20 +1780,31 @@ if mode == "Compare":
     if added:
         why_peers = ("Companies you added, alongside the suggested set."
                      if len(peer_tickers) > len(added) else "Companies you added.")
+        why_kind = "manual"
 
     if not peer_tickers:
         industry = prof.get("industry") or ""
+        # The two refusals are different situations and used to share a
+        # message, which meant a company with a perfectly narrow industry code
+        # was told its code was too broad.
+        if why_kind == "broad":
+            reason = ("Peers here are hand-checked rather than guessed from the SEC's "
+                      "industry code, because this company's code"
+                      + (f", “{E(industry)}”," if industry else "")
+                      + " covers businesses too different to compare fairly.")
+        else:
+            reason = ("Comparison sets are hand-checked, and this company does not have "
+                      "one yet"
+                      + (f" — it is filed under “{E(industry)}”." if industry else ".")
+                      + " Guessing from the SEC's industry code alone tends to pair "
+                      "companies that only look alike on paper.")
+
         st.markdown(
-            '<div class="panel"><p class="fbody"><b>No comparison is available for this '
-            "company yet.</b> Peers are hand-checked rather than guessed from the SEC's "
-            "industry code, because that code is often too broad to be useful"
-            + (f' — this company is filed under “{E(industry)}”, which covers hundreds '
-               "of unrelated businesses." if industry else ".")
-            + "</p><p class=\'fbody\' style=\'margin-top:.6rem\'>Comparing against the "
-            "wrong companies is worse than not comparing at all, so the tool declines "
-            "rather than filling the table with whatever shares a code. "
-            "<b>Add a ticker above to compare against whichever companies you "
-            "choose.</b></p></div>", unsafe_allow_html=True)
+            '<div class="panel"><p class="fbody"><b>No comparison set for this company '
+            f"yet.</b> {reason}</p>"
+            "<p class=\'fbody\' style=\'margin-top:.6rem\'><b>Add any company above and "
+            "the comparison works normally</b> — you can pick whichever businesses you "
+            "think belong side by side.</p></div>", unsafe_allow_html=True)
     else:
         rows = []
         for tk in [ticker] + peer_tickers:
