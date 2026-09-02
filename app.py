@@ -684,6 +684,18 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 .cmp tr.self .pbar i{background:var(--acc)}
 @media (max-width:640px){.pbar{width:40px}}
 
+
+/* how a return arrives */
+.shape{font-family:var(--mono);font-size:.66rem;font-weight:700;padding:.18rem .45rem;
+  border-radius:11px;white-space:nowrap}
+.shape.growth{background:rgba(240,196,106,.14);color:var(--warn)}
+.shape.income{background:rgba(95,214,155,.13);color:var(--up)}
+.shape.earned{background:rgba(111,198,232,.13);color:#6FC6E8}
+.shapes{margin-top:.8rem}
+.shapes p{margin:0 0 .35rem;font-size:.85rem;color:var(--text-2);line-height:1.55;
+  max-width:70ch}
+.shapes p b{color:#FFFFFF;font-weight:700}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -739,6 +751,31 @@ def sparkline(hist, months: int = 60, w: int = 120, h: int = 34) -> str:
             'stroke-linejoin="round" stroke-linecap="round"/>'
             f'<circle cx="{X(len(vals) - 1):.1f}" cy="{Y(vals[-1]):.1f}" r="2.4" '
             f'fill="{colour}"/></svg>')
+
+
+def return_shape(pct_expectations: float, dividend_yield: float) -> tuple[str, str]:
+    """How a return would arrive, given the price split and the dividend.
+
+    This describes the security, not a holding period. A company paying
+    nothing while its price rests on future growth returns nothing until that
+    growth shows up; one paying a dividend on already-earned profit pays out
+    along the way regardless. Both are facts about the share. What suits a
+    particular person is not, which is why nothing here recommends a horizon.
+    """
+    pays = dividend_yield >= 1.5
+    heavy = pct_expectations >= 55
+
+    if heavy and not pays:
+        return ("growth", "Nothing is paid out while you wait; the return depends "
+                          "entirely on growth arriving.")
+    if heavy and pays:
+        return ("growth", "Mostly riding on growth, though a dividend pays something "
+                          "along the way.")
+    if not heavy and pays:
+        return ("income", f"Pays {dividend_yield:.1f}% a year in cash on profit already "
+                          "reported, whatever the price does.")
+    return ("earned", "Little is riding on future growth, but nothing is paid out "
+                      "either — the return has to come from the price.")
 
 
 def price_chart(hist, label=""):
@@ -1570,6 +1607,8 @@ if mode == "Compare":
                 pprice = pq.price if pq.available else None
                 split = expect.expectations(pprice, peps)
                 pni, prev = pl.get("net_income"), pl.get("revenue")
+                pdps = pl.get("dps")
+                pdy = (100 * pdps / pprice) if (pdps and pprice) else 0.0
                 rows.append({
                     "self": h["cik"] == cik,
                     "ticker": h["ticker"],
@@ -1579,6 +1618,7 @@ if mode == "Compare":
                     "pct": split.pct if split else None,
                     "margin": (100 * pni / prev) if (pni is not None and prev) else None,
                     "day": pq.day_change_pct,
+                    "dy": pdy,
                 })
             except Exception:
                 continue
@@ -1597,11 +1637,14 @@ if mode == "Compare":
                 "the future — which is what makes a share swing harder on news.</p>",
                 unsafe_allow_html=True)
 
-            head = ("<tr><th>Company</th><th>Price is expectations</th><th>P/E</th>"
-                    "<th>Net margin</th></tr>")
+            head = ("<tr><th>Company</th><th>Paying for future growth</th>"
+                    "<th>How the return arrives</th><th>P/E</th></tr>")
             body = ""
             for r in scored:
                 bar = (f'<span class="pbar"><i style="width:{r["pct"]:.0f}%"></i></span>')
+                kind, _ = return_shape(r["pct"], r["dy"])
+                label = {"growth": "growth", "income": "income",
+                         "earned": "earned profit"}[kind]
                 body += (
                     f'<tr class="{"self" if r["self"] else ""}">'
                     f'<td>{E(r["name"])}'
@@ -1609,9 +1652,8 @@ if mode == "Compare":
                        f'{"▲" if r["day"] >= 0 else "▼"}{abs(r["day"]):.2f}%</span>'
                        if r["day"] is not None else "")
                     + f'</td><td>{r["pct"]:.0f}% {bar}</td>'
+                    f'<td><span class="shape {kind}">{label}</span></td>'
                     f'<td>{r["pe"]:,.1f}×</td>'
-                    + (f'<td>{r["margin"]:,.1f}%</td>' if r["margin"] is not None
-                       else "<td>—</td>")
                     + "</tr>")
             st.markdown(f'<div class="panel"><table class="comp cmp">'
                         f"<thead>{head}</thead><tbody>{body}</tbody></table></div>",
@@ -1643,6 +1685,10 @@ if mode == "Compare":
                 "profit does less of both. <b>Which suits you depends on how long you can "
                 "leave money alone — and that is not something a filing can tell you.</b>"
                 "</p></div>", unsafe_allow_html=True)
+
+            st.markdown('<div class="shapes">' + "".join(
+                f'<p><b>{E(r["name"])}</b> — {return_shape(r["pct"], r["dy"])[1]}</p>'
+                for r in scored) + "</div>", unsafe_allow_html=True)
 
             others = [r for r in scored if not r["self"]]
             if others:
