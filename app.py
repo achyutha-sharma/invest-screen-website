@@ -15,7 +15,9 @@ import streamlit as st
 
 from datetime import date
 
-from filing_text import latest_filings, read_filing
+import expectations as expect
+from filing_text import (insider_activity, latest_filings,
+                          read_filing, risk_changes)
 import funds as funds_data
 from prices import PriceClient
 from quiz import (build as quiz_build, grade as quiz_grade, new_seed,
@@ -671,6 +673,17 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 .byline a{color:var(--acc);text-decoration:none;font-weight:600}
 .byline a:hover{text-decoration:underline;color:var(--acc-2)}
 
+
+/* risk comparison columns */
+.rcol .rhead{display:block;font-size:.62rem;letter-spacing:.12em;text-transform:uppercase;
+  font-weight:700;margin-bottom:.5rem}
+.rhead.add{color:var(--warn)} .rhead.drop{color:var(--text-3)}
+.rcol p{position:relative;padding:.5rem 0 .5rem 1.1rem;margin:0;font-size:.87rem;
+  color:var(--text-2);line-height:1.6;border-bottom:1px solid var(--line)}
+.rcol p:last-child{border-bottom:0}
+.rcol p::before{content:"";position:absolute;left:.2rem;top:1.05em;width:5px;height:5px;
+  border-radius:50%;background:var(--text-3)}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -785,7 +798,7 @@ def price_chart(hist, label=""):
     if chg is not None:
         st.markdown(
             f'<div class="readout"><p>Over about {years} years the price went from '
-            f'<b>{DH}{vals[0]:,.2f}</b> to <b>{DH}{vals[-1]:,.2f}</b> — '
+            f'<b>{D}{vals[0]:,.2f}</b> to <b>{D}{vals[-1]:,.2f}</b> — '
             f'<b>{"up" if chg >= 0 else "down"} {abs(chg):,.0f}%</b>.</p>'
             "<p>Price alone does not say whether the business improved. The trend above "
             "shows revenue and profit over the same period, which is what to compare it "
@@ -847,6 +860,23 @@ def fiscal_prices(ticker: str, ends: tuple):
 @st.cache_data(show_spinner=False, ttl=86_400)
 def filings(cik: str):
     return latest_filings(client, cik, limit=8)
+
+
+@st.cache_data(show_spinner=False, ttl=86_400)
+def risk_diff(cik: str):
+    """Comparison between the last two annual reports. Best-effort."""
+    try:
+        return risk_changes(client, cik)
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False, ttl=86_400)
+def insiders(cik: str):
+    try:
+        return insider_activity(client, cik)
+    except Exception:
+        return None
 
 
 @st.cache_data(show_spinner=False, ttl=86_400)
@@ -1936,6 +1966,94 @@ st.markdown(f'''<div class="panel">
     advice to buy or sell. A high score at the wrong price still loses money, and a low score
     can rise for years. It scores what the company has already reported — the future is not in
     the filings.</div></div>''', unsafe_allow_html=True)
+
+# --------------------------------------------------------------------------
+# What the price assumes
+# --------------------------------------------------------------------------
+# The P/E restated as money: how much of the price is profit already earned,
+# and how much is profit still expected. Arithmetic, not a forecast.
+
+exp_rows = expect.build(
+    price=q.price if q.available else None,
+    eps=eps,
+    revenues=[v for _, v in eq.series("revenue")],
+    ebits=[v for _, v in eq.series("ebit")],
+    debt=latest.get("total_debt"),
+    cash=latest.get("cash"),
+    shares=latest.get("shares"),
+)
+if exp_rows:
+    sh("What the price assumes", "structural, not predicted")
+    split = expect.expectations(q.price if q.available else None, eps)
+    if split:
+        st.markdown(
+            f'<div class="panel"><div class="split2">'
+            f'<div style="width:{100 - split.pct:.1f}%;background:var(--up)"></div>'
+            f'<div style="width:{split.pct:.1f}%;background:var(--c3)"></div></div>'
+            '<div class="skey">'
+            f'<span><i style="background:var(--up)"></i>earned already '
+            f'<b>{D}{split.justified:,.0f}</b></span>'
+            f'<span><i style="background:var(--c3)"></i>expected, not yet earned '
+            f'<b>{D}{split.expectation:,.0f}</b></span></div>'
+            f'<p class="readout" style="margin-top:.8rem">Of the '
+            f'<b>{D}{split.price:,.2f}</b> share price, about '
+            f'<b>{split.pct:.0f}%</b> is paying for profits the company has not '
+            "reported yet.</p></div>", unsafe_allow_html=True)
+
+    for r in exp_rows:
+        with st.expander(f"{r.name}  ·  {r.value}"):
+            st.markdown(r.what.replace("$", chr(92) + "$") + "\n\n**Why it matters.** "
+                        + r.why.replace("$", chr(92) + "$"))
+    st.caption("Sensitivities, not forecasts: they say how much the share reacts if "
+               "something moves, never whether it will.")
+
+# --------------------------------------------------------------------------
+# What changed in the risk factors
+# --------------------------------------------------------------------------
+# Two annual reports compared. Companies rarely drop a risk once listed, so an
+# addition means something changed enough to write down.
+
+rd = risk_diff(cik)
+if rd and (rd.get("added") or rd.get("removed")):
+    sh("What changed this year",
+       f"{rd['last_year']} vs {rd['this_year']}")
+    body = ""
+    if rd["added"]:
+        body += ('<div class="rcol"><span class="rhead add">Newly added</span>'
+                 + "".join(f"<p>{E(r)}</p>" for r in rd["added"][:5]) + "</div>")
+    if rd["removed"]:
+        body += ('<div class="rcol"><span class="rhead drop">No longer listed</span>'
+                 + "".join(f"<p>{E(r)}</p>" for r in rd["removed"][:5]) + "</div>")
+    st.markdown(f'<div class="panel movegrid">{body}</div>', unsafe_allow_html=True)
+    st.caption("Compared between the last two annual reports. Filers rarely remove a "
+               "risk once listed, so a new one means something changed enough to write "
+               "it down — and a removal is rarer still.")
+
+# --------------------------------------------------------------------------
+# Insider filings
+# --------------------------------------------------------------------------
+
+ins = insiders(cik)
+if ins and ins.get("filings"):
+    sh("Insider filings", "Form 4")
+    rows = "".join(
+        f'<li><span class="ftype o">4</span>'
+        f'<span class="fmain"><a href="{E(f["url"])}" target="_blank" '
+        f'rel="noopener">Insider transaction report</a></span>'
+        f'<span class="fwhen">{E(f["filed"])}</span></li>'
+        for f in ins["filings"])
+    st.markdown(f'<div class="panel"><ul class="feed">{rows}</ul></div>',
+                unsafe_allow_html=True)
+    with st.expander("What insider filings do and do not tell you"):
+        st.markdown(
+            "A Form 4 is filed whenever a director or officer trades their own "
+            "company's shares.\n\n"
+            "**A sale on its own means very little.** Executives are paid partly in "
+            "shares and sell for tax bills, diversification, or under a plan scheduled "
+            "months in advance.\n\n"
+            "**Clustered buying is rarer** and harder to explain away — insiders have "
+            "no obligation to buy, so several doing it at once is at least worth "
+            "noticing. Even then it is a question to ask, not an answer.")
 
 # --------------------------------------------------------------------------
 # Notes and footer
