@@ -1270,7 +1270,8 @@ if "cik" not in st.session_state and not query and prices.configured:
 
     moves = biggest_moves(tuple(WATCHLIST), mkt_pct)
     if moves:
-        st.markdown('<p class="picker">Biggest moves today</p>', unsafe_allow_html=True)
+        st.markdown('<p class="picker">Some of the biggest movers today</p>',
+                    unsafe_allow_html=True)
         for r in moves:
             up = r["pct"] >= 0
             f = r["filing"]
@@ -1319,8 +1320,9 @@ if "cik" not in st.session_state and not query and prices.configured:
                 st.session_state["name"] = r["name"]
                 st.session_state.pop("fund", None)
                 st.rerun()
-        st.caption("Ranked by size of move, up or down, across a watchlist of large "
-                   "companies — not a scan of the whole market.")
+        st.caption("From a watchlist of large companies, ranked by size of move, up or "
+                   "down. Not a scan of the whole market, so a bigger mover elsewhere "
+                   "will not appear here.")
 
 # A query already acted on must not re-trigger: Streamlit reruns the whole
 # script on every interaction and the search box keeps its text, so without
