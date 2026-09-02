@@ -27,6 +27,9 @@ QUOTE_URL = "https://finnhub.io/api/v1/quote"
 # History comes from Tiingo rather than Finnhub, whose candle endpoint is not
 # on the free tier. Two providers, each doing the one thing it does well.
 TIINGO_URL = "https://api.tiingo.com/tiingo/daily/{sym}/prices"
+# What analysts expected, against what was reported. Not a filing, and the app
+# labels it as such -- estimates are opinions, and companies manage them.
+EARNINGS_URL = "https://finnhub.io/api/v1/stock/earnings"
 
 CACHE_DIR = Path(os.environ.get("PRICE_CACHE_DIR", Path.home() / ".price_cache"))
 QUOTE_TTL = 10 * 60           # free-tier data is delayed anyway
@@ -68,6 +71,54 @@ class PriceClient:
     @property
     def has_history(self) -> bool:
         return bool(self.history_key)
+
+    def surprises(self, ticker: str, limit: int = 4) -> list[dict]:
+        """Recent quarters: what was expected against what was reported.
+
+        Returns [] rather than raising, like everything else here, so a page
+        simply omits the section when the feed has nothing.
+        """
+        sym = (ticker or "").strip().upper()
+        if not sym or not self.key:
+            return []
+
+        cached = self._cached(f"e_{sym}.json", HISTORY_TTL)
+        if isinstance(cached, list):
+            return [r for r in cached if isinstance(r, dict)][:limit]
+
+        try:
+            import requests
+
+            r = requests.get(EARNINGS_URL,
+                             params={"symbol": sym, "token": self.key},
+                             timeout=self.timeout)
+            if r.status_code != 200:
+                return []
+            data = r.json()
+        except Exception:
+            return []
+
+        if not isinstance(data, list):
+            return []
+
+        out = []
+        for row in data:
+            est, act = row.get("estimate"), row.get("actual")
+            if est is None or act is None:
+                continue
+            out.append({
+                "period": str(row.get("period", ""))[:10],
+                "quarter": row.get("quarter"),
+                "year": row.get("year"),
+                "estimate": float(est),
+                "actual": float(act),
+                "surprise_pct": row.get("surprisePercent"),
+            })
+
+        out.sort(key=lambda r: r["period"], reverse=True)
+        if out:
+            self._store(f"e_{sym}.json", out)
+        return out[:limit]
 
     @property
     def configured(self) -> bool:
