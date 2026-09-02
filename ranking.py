@@ -27,12 +27,13 @@ from dataclasses import dataclass, field
 # What each component contributes. These are judgement calls, and they are
 # stated openly on the page so a reader can disagree with them.
 WEIGHTS = {
-    "valuation": 25,
-    "growth": 20,
-    "profitability": 20,
-    "strength": 15,
-    "quality": 10,
-    "returns": 10,
+    "valuation": 22,
+    "growth": 18,
+    "profitability": 18,
+    "strength": 14,
+    "quality": 9,
+    "returns": 9,
+    "stability": 10,
 }
 
 LABELS = {
@@ -42,6 +43,7 @@ LABELS = {
     "strength": "Financial strength",
     "quality": "Earnings quality",
     "returns": "Shareholder returns",
+    "stability": "Price stability",
 }
 
 MEASURES = {
@@ -51,6 +53,7 @@ MEASURES = {
     "strength": "net debt/EBITDA, interest coverage, current ratio",
     "quality": "cash flow against reported profit, margin stability",
     "returns": "dividend yield, dividend cover, buybacks",
+    "stability": "volatility of monthly returns, worst fall from a peak",
 }
 
 # Minimum share of the total weight that must be scoreable for a company to
@@ -81,6 +84,10 @@ class Figures:
     current_liabilities: float | None = None
     dps: float | None = None
     buybacks: float | None = None
+    # Month-end closes, oldest first. Price, not business -- kept separate in
+    # its own component and labelled as such, because a steady share price is
+    # not the same thing as a sound company.
+    prices: list[float] = field(default_factory=list)
 
     # ---- derived measures, each None when its inputs are missing ----
 
@@ -216,6 +223,40 @@ class Figures:
         return self.eps / self.dps
 
     @property
+    def volatility(self) -> float | None:
+        """Annualised spread of monthly returns. Lower is steadier.
+
+        Negated so the ranking below, which always treats higher as better,
+        needs no special case.
+        """
+        px = self.prices
+        if len(px) < 24:
+            return None
+        rets = [(b / a - 1) for a, b in zip(px, px[1:]) if a]
+        if len(rets) < 12:
+            return None
+        mean = sum(rets) / len(rets)
+        var = sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)
+        return -(var ** 0.5) * (12 ** 0.5) * 100
+
+    @property
+    def worst_fall(self) -> float | None:
+        """Largest peak-to-trough fall in the period held. Negated, as above.
+
+        The figure that matters more than volatility for most people: not how
+        much a share wobbles, but how far it fell and stayed down.
+        """
+        px = self.prices
+        if len(px) < 24:
+            return None
+        peak, worst = px[0], 0.0
+        for p in px:
+            peak = max(peak, p)
+            if peak:
+                worst = min(worst, p / peak - 1)
+        return worst * 100
+
+    @property
     def buyback_yield(self) -> float | None:
         cap = self.market_cap
         if cap and self.buybacks:
@@ -234,6 +275,7 @@ COMPONENTS: dict[str, list[tuple[str, bool]]] = {
     "quality": [("cash_conversion", True), ("margin_stability", True)],
     "returns": [("dividend_yield", True), ("dividend_cover", True),
                 ("buyback_yield", True)],
+    "stability": [("volatility", True), ("worst_fall", True)],
 }
 
 
