@@ -276,12 +276,34 @@ _ANNUAL_INSTANT = [
 
 
 def _period_ends(store: EquityStore, years: int) -> list[date]:
-    """Fiscal year ends, newest first, anchored on revenue then net income."""
+    """Fiscal year ends, newest first.
+
+    Every tag in both chains contributes its period ends, rather than the
+    first tag that happens to have data. Filers switch revenue tags between
+    years -- a company moving to
+    RevenueFromContractWithCustomerExcludingAssessedTax mid-history would
+    otherwise lose every year filed under the new tag, and the most recent
+    year would simply vanish from the table while the header still named it.
+    """
+    ends: set[date] = set()
     for chain in (REVENUE, NET_INCOME):
-        _, series = store.resolve(chain, "duration")
-        if series:
-            return sorted(series.keys(), reverse=True)[:years]
-    return []
+        for tag in chain:
+            ends.update(store.series(tag, "duration").keys())
+
+    if not ends:
+        return []
+
+    # A fiscal year end repeats roughly annually. Anything closer than ten
+    # months to a year already kept is a partial period that slipped through
+    # the duration filter, not a separate year.
+    ordered = sorted(ends, reverse=True)
+    kept: list[date] = []
+    for end in ordered:
+        if all(abs((end - k).days) > 300 for k in kept):
+            kept.append(end)
+        if len(kept) >= years:
+            break
+    return kept
 
 
 def extract_equity(payload: dict, cik: str = "", years: int = 10) -> Equity:
