@@ -1050,6 +1050,22 @@ def test_ranking():
     from ranking import COMPONENTS, Figures, MIN_COVERAGE, WEIGHTS, rank
 
     assert sum(WEIGHTS.values()) == 100, "weights must total 100"
+
+    # Price stability is about the share, not the business, so it is kept as
+    # its own component rather than mixed into a business measure.
+    assert "stability" in WEIGHTS and "stability" in COMPONENTS
+
+    steady = [100 * (1.008 ** i) for i in range(120)]
+    wild = [100 * (1.008 ** i) * (1.3 if i % 7 == 0 else 0.8 if i % 5 == 0 else 1)
+            for i in range(120)]
+    calm = Figures(ticker="CALM", name="CALM", prices=steady)
+    rough = Figures(ticker="ROUGH", name="ROUGH", prices=wild)
+    # Both are negated so higher is better; the steadier share must score higher.
+    assert calm.volatility > rough.volatility
+    assert calm.worst_fall > rough.worst_fall
+    # Too short a history yields nothing rather than a figure from noise.
+    assert Figures(ticker="X", name="X", prices=steady[:10]).volatility is None
+    assert Figures(ticker="X", name="X", prices=[]).worst_fall is None
     assert set(WEIGHTS) == set(COMPONENTS), "every component needs a weight"
 
     def mk(t, **kw):
@@ -1060,7 +1076,8 @@ def test_ranking():
             fcf=[70, 85, 100, 120, 140],
             ebit=200, ebitda=250, ocf=180, debt=300, cash=400,
             equity=900, interest=20, current_assets=600,
-            current_liabilities=300, dps=1.0, buybacks=50)
+            current_liabilities=300, dps=1.0, buybacks=50,
+            prices=[100 * (1.006 ** i) for i in range(120)])
         base.update(kw)
         return Figures(**base)
 
@@ -1071,7 +1088,9 @@ def test_ranking():
               fcf=[60, 58, 57, 56, 55],
               ebit=90, ebitda=120, ocf=85, debt=900, cash=100,
               equity=700, interest=60, current_assets=500,
-              current_liabilities=480, buybacks=None)
+              current_liabilities=480, buybacks=None,
+              prices=[100 * (1.002 ** i) * (1.25 if i % 6 == 0 else 0.85
+                      if i % 4 == 0 else 1) for i in range(120)])
 
     scored = {s.ticker: s for s in rank([strong, weak])}
     assert scored["STRONG"].total > scored["WEAK"].total
