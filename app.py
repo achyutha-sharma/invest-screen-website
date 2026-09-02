@@ -759,6 +759,14 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
   color:#FFFFFF;margin:.25rem 0 .15rem}
 .nextq .d{display:block;font-size:.78rem;color:var(--text-2)}
 
+
+.bigscore{background:rgba(169,139,255,.08);border:1px solid var(--acc-dim);
+  border-radius:10px;padding:1rem 1.15rem;margin-bottom:.8rem}
+.bigscore .mark{font-size:2.1rem;padding:.1rem .6rem}
+.bigscore .outof{font-size:.75rem;color:var(--text-3);margin-left:.5rem}
+.bigscore p{margin:.6rem 0 0;font-size:.86rem;color:var(--text-2);line-height:1.6;
+  max-width:70ch}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -862,6 +870,63 @@ def return_shape(pct_expectations: float, dividend_yield: float) -> tuple[str, s
                           "reported, whatever the price does.")
     return ("earned", "Little is riding on future growth, but nothing is paid out "
                       "either — the return has to come from the price.")
+
+
+def figures_for(tick: str, e, latest_p, quote_, hist) -> ranking.Figures:
+    """The inputs the weighted score needs, from figures already extracted."""
+    def ser(key):
+        return [p.get(key) for p in e.years if p.get(key) is not None]
+
+    ebit = latest_p.get("ebit")
+    ebitda = None if ebit is None else ebit + (latest_p.get("da") or 0)
+    fcf = [a - b for a, b in
+           zip([p.get("ocf") for p in e.years], [p.get("capex") for p in e.years])
+           if a is not None and b is not None]
+
+    return ranking.Figures(
+        ticker=tick, name=e.entity.split(",")[0].title(),
+        price=quote_.price if quote_ and quote_.available else None,
+        eps=latest_p.get("eps"), shares=latest_p.get("shares"),
+        revenue=ser("revenue"), net_income=ser("net_income"), fcf=fcf,
+        ebit=ebit, ebitda=ebitda, ocf=latest_p.get("ocf"),
+        debt=latest_p.get("total_debt"), cash=latest_p.get("cash"),
+        equity=latest_p.get("equity"), interest=latest_p.get("interest"),
+        current_assets=latest_p.get("current_assets"),
+        current_liabilities=latest_p.get("current_liabilities"),
+        dps=latest_p.get("dps"), buybacks=latest_p.get("buybacks"),
+        prices=[v for _, v in hist])
+
+
+@st.cache_data(show_spinner=False, ttl=21_600)
+def peer_score(tick: str, cik_: str, sic: str):
+    """This company's weighted score, ranked against its peer set.
+
+    A score only means something relative to something else, so a single
+    company is measured against the same peers the comparison would use. With
+    no peer set there is nothing to rank against and no score is shown.
+    """
+    tickers, _ = suggest(tick, sic=sic)
+    if not tickers:
+        return None
+
+    figs = []
+    for t in [tick] + list(tickers):
+        try:
+            hits = search(t)
+            if not hits:
+                continue
+            h = hits[0]
+            e = extract_equity(facts(h["cik"]), cik=h["cik"])
+            hist = prices.monthly(h["ticker"]) if prices.has_history else []
+            figs.append(figures_for(h["ticker"], e, e.latest,
+                                    quote(h["ticker"]), hist))
+        except Exception:
+            continue
+
+    if len(figs) < 2:
+        return None
+    marks = {m.ticker: m for m in ranking.rank(figs)}
+    return marks.get(tick.upper()) or marks.get(figs[0].ticker)
 
 
 def pretty_period(iso: str) -> str:
@@ -1857,7 +1922,8 @@ if mode == "Compare":
                     interest=pl.get("interest"),
                     current_assets=pl.get("current_assets"),
                     current_liabilities=pl.get("current_liabilities"),
-                    dps=pl.get("dps"), buybacks=pl.get("buybacks"))
+                    dps=pl.get("dps"), buybacks=pl.get("buybacks"),
+                    prices=[v for _, v in phist])
 
                 rows.append({
                     "figs": figs,
@@ -2455,6 +2521,40 @@ if fl:
 # --------------------------------------------------------------------------
 # 08 the scorecard
 # --------------------------------------------------------------------------
+
+mine = peer_score(ticker, cik, str(prof.get("sic") or ""))
+if mine and mine.total is not None:
+    sh("Score against its peers", "same measures as the comparison")
+
+    band = ("up" if mine.total >= 60 else "down" if mine.total < 40 else "mid")
+    st.markdown(
+        f'<div class="bigscore"><span class="mark {band}">{mine.total:.0f}</span>'
+        '<span class="outof">out of 100</span>'
+        "<p>Ranked against the companies it is usually compared with, across "
+        "seven measures weighted below. A score only means something relative to "
+        "something else, so this is a placing among peers — not a verdict.</p>"
+        "</div>", unsafe_allow_html=True)
+
+    rows_ = ""
+    for k in ranking.WEIGHTS:
+        v = mine.components.get(k)
+        cell = ("<span class='ret none'>not filed</span>" if v is None else
+                f'<span class="ret {"up" if v >= 60 else "down" if v < 40 else "none"}">'
+                f"{v:.0f}</span>")
+        rows_ += (f'<tr><td>{E(ranking.LABELS[k])}</td>'
+                  f'<td class="wgt">{ranking.WEIGHTS[k]}%</td>'
+                  f"<td>{cell}</td>"
+                  f'<td class="meas">{E(ranking.MEASURES[k])}</td></tr>')
+    st.markdown(
+        '<div class="panel" style="overflow-x:auto"><table class="comp wtable">'
+        "<thead><tr><th>Component</th><th>Weight</th><th>Score</th>"
+        "<th>Measured by</th></tr></thead>"
+        f"<tbody>{rows_}</tbody></table></div>", unsafe_allow_html=True)
+    st.caption(
+        "Each component is scored 0-100 against the peer set, then weighted. "
+        "**Price stability** measures the share, not the business — a steady price "
+        "is not the same as a sound company. A measure the filings do not contain "
+        "is skipped rather than counted against the company.")
 
 sh("The scorecard", "what the filings answer")
 dots = ""
