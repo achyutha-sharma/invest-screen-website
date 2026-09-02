@@ -959,6 +959,43 @@ def test_never_more_than_four_quarters():
     print("quarter count bounded ok")
 
 
+
+
+def test_quarter_labels_by_fiscal_month():
+    """Quarter numbers follow the fiscal calendar, not the calendar year.
+
+    Counting elapsed months from a specific year-end date drifted when that
+    date was stale, which put a company's first quarter in the second slot and
+    left the first showing "not filed yet" beside a count that said four.
+    """
+    def year_of_quarters(fy_end_month, quarters, annual_end):
+        rows = [dur(annual_end.replace("12-31", "01-01"), annual_end, 16_000)]
+        for start, end, val in quarters:
+            rows.append(dur(start, end, val, form="10-Q", filed=end))
+        return extract_equity(build("CAL CO", {
+            "Revenues": {"units": {"USD": rows}},
+            "NetIncomeLoss": {"units": {"USD": [dur(
+                annual_end.replace("12-31", "01-01"), annual_end, 1_600)]}},
+        }))
+
+    # December year-end: quarters end March, June, September.
+    eq = year_of_quarters(12, [
+        ("2026-01-01", "2026-03-31", 4_100),
+        ("2026-04-01", "2026-06-30", 4_300),
+        ("2026-07-01", "2026-09-30", 4_500),
+    ], "2025-12-31")
+    assert [p.fp for p in eq.quarters] == ["Q1", "Q2", "Q3"], [p.fp for p in eq.quarters]
+
+    # Every label must be unique, or the page shows one quarter as missing
+    # while claiming a higher count.
+    labels = [p.fp for p in eq.quarters]
+    assert len(set(labels)) == len(labels)
+
+    # The first quarter of the year must never be reported as the second.
+    assert eq.quarters[0].fp == "Q1" and eq.quarters[0].get("revenue") == 4_100
+    print("fiscal quarter labels ok")
+
+
 def main():
     test_clean()
     test_valuation()
@@ -978,6 +1015,7 @@ def main():
     test_quarter_numbering()
     test_quarters_from_ytd()
     test_never_more_than_four_quarters()
+    test_quarter_labels_by_fiscal_month()
     print("\nAll checks passed.")
 
 
