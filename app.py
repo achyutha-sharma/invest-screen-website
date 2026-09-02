@@ -1945,25 +1945,35 @@ if mode == "Compare":
 
         scored = [r for r in rows if r["pe"] is not None]
         if len(scored) < 2:
-            st.markdown('<p class="lead">Not enough priced peers to compare.</p>',
-                        unsafe_allow_html=True)
-            st.caption("A comparison needs a share price and positive earnings for at "
-                       "least two companies. A loss-making company has no P/E to "
-                       "compare, so it is left out rather than shown as zero.")
-        else:
-            # A weighted score across six components, each ranked against the
-            # other companies in this comparison rather than a fixed
-            # threshold -- what counts as a normal multiple or a good margin
-            # differs completely between industries.
-            marks = {m.ticker: m for m in
-                     ranking.rank([r["figs"] for r in scored])}
-            for r in scored:
-                m = marks.get(r["ticker"])
-                r["score"] = m.total if m else None
-                r["parts"] = m.components if m else {}
-                r["missing"] = m.missing if m else []
+            # Naming what was dropped and why beats a bare refusal -- otherwise
+            # a reader cannot tell a missing price from a missing filing.
+            dropped = [r["name"] for r in rows if r["pe"] is None]
+            tried = {r["ticker"] for r in rows}
+            never = [t for t in [ticker] + list(peer_tickers)
+                     if t.upper() not in {x.upper() for x in tried}]
 
-            scored.sort(key=lambda r: (r["score"] is not None, r["score"] or 0),
+            bits = []
+            if dropped:
+                bits.append("no share price or no positive earnings for "
+                            + ", ".join(E(n) for n in dropped[:4]))
+            if never:
+                bits.append("no SEC filings found for "
+                            + ", ".join(E(t) for t in never[:4]))
+
+            st.markdown(
+                '<div class="panel"><p class="fbody"><b>Not enough companies could be '
+                "compared.</b> A comparison needs a share price and positive earnings "
+                "for at least two"
+                + (" — " + "; ".join(bits) + "." if bits else ".")
+                + "</p><p class=\'fbody\' style=\'margin-top:.6rem\'>A loss-making "
+                "company has no P/E, so it is left out rather than shown as zero. "
+                "<b>Add another company above to compare against.</b></p></div>",
+                unsafe_allow_html=True)
+        else:
+            # Ordered by revenue growth actually reported last year -- a fact
+            # about what happened. The weighted score lives on the research
+            # page, where there is room to explain it.
+            scored.sort(key=lambda r: (r["growth"] is not None, r["growth"] or 0),
                         reverse=True)
 
 
@@ -1971,27 +1981,20 @@ if mode == "Compare":
             # page, so it needs one plain sentence and one worked figure --
             # not a lesson.
             st.markdown(
-                '<div class="explain"><p><b>Scored out of 100 against each other</b>, '
-                "not against a fixed standard — a normal margin for a supermarket is a "
-                "terrible one for software, so the peer set is the only fair "
-                "benchmark.</p></div>", unsafe_allow_html=True)
+                '<div class="explain"><p><b>Ranked by how much sales actually grew last '
+                "year.</b> <b>Expected next quarter</b> is what analysts predict for "
+                "earnings per share in the quarter still to be reported — a forecast, "
+                "not a filed figure. The weighted score is on the Research page.</p>"
+                "</div>", unsafe_allow_html=True)
 
             any_return = any(r["cagr"] is not None for r in scored)
             any_next = any(r["next"] for r in scored)
-            head = ("<tr><th>#</th><th>Company</th><th>Score</th>"
-                    "<th>Sales growth</th>"
+            head = ("<tr><th>#</th><th>Company</th><th>Sales growth</th>"
                     + ("<th>Price return a year</th>" if any_return else "")
                     + ("<th>Expected next quarter</th>" if any_next else "")
                     + "<th>P/E</th></tr>")
             body = ""
             for rank, r in enumerate(scored, start=1):
-                if r["score"] is None:
-                    mark = '<span class="ret none">too little filed</span>'
-                else:
-                    band = ("up" if r["score"] >= 60 else
-                            "down" if r["score"] < 40 else "mid")
-                    mark = f'<span class="mark {band}">{r["score"]:.0f}</span>'
-
                 if r["growth"] is None:
                     grow = '<span class="ret none">—</span>'
                 else:
@@ -2022,7 +2025,7 @@ if mode == "Compare":
                     + (f'<span class="mini {"up" if r["day"] >= 0 else "down"}">'
                        f'{"▲" if r["day"] >= 0 else "▼"}{abs(r["day"]):.2f}%</span>'
                        if r["day"] is not None else "")
-                    + f"</td><td>{mark}</td><td>{grow}</td>"
+                    + f"</td><td>{grow}</td>"
                     + (f"<td>{ret}</td>" if any_return else "")
                     + (f"<td>{nxt}</td>" if any_next else "")
                     + f'<td>{r["pe"]:,.1f}×</td>'
@@ -2033,12 +2036,9 @@ if mode == "Compare":
 
             top = scored[0]
             note = ""
-            if top["score"] is not None:
-                best = max((k for k, v in top["parts"].items() if v is not None),
-                           key=lambda k: top["parts"][k], default=None)
-                note = (f'<b>{E(top["name"])}</b> scores highest overall'
-                        + (f', strongest on <b>{E(ranking.LABELS[best].lower())}</b>. '
-                           if best else ". "))
+            if top["growth"] is not None:
+                note = (f'<b>{E(top["name"])}</b> grew sales fastest last year, at '
+                        f'<b>{top["growth"]:+,.1f}%</b>. ')
             st.markdown(
                 f'<div class="readout"><p>{note}<b>Growing fastest is not the same as '
                 "being the better buy.</b> A company already expected to grow has to "
@@ -2046,48 +2046,6 @@ if mode == "Compare":
                 "Estimates are analysts' opinions, not filings — and companies guide "
                 "them toward a number they are confident of clearing.</p></div>",
                 unsafe_allow_html=True)
-
-            with st.expander("What goes into the score"):
-                rows_ = "".join(
-                    f'<tr><td>{E(ranking.LABELS[k])}</td>'
-                    f'<td class="wgt">{ranking.WEIGHTS[k]}%</td>'
-                    f'<td class="meas">{E(ranking.MEASURES[k])}</td></tr>'
-                    for k in ranking.WEIGHTS)
-                st.markdown(
-                    '<table class="comp wtable"><thead><tr><th>Component</th>'
-                    "<th>Weight</th><th>Measured by</th></tr></thead>"
-                    f"<tbody>{rows_}</tbody></table>", unsafe_allow_html=True)
-                st.markdown(
-                    "Each measure is ranked against the other companies shown, then "
-                    "averaged into its component and weighted as above.\n\n"
-                    "**A figure a company does not file is skipped, not counted "
-                    "against it** — the remaining components are reweighted instead. A "
-                    "company missing more than half the picture gets no score at all "
-                    "rather than a misleading one.\n\n"
-                    "**The weights are a judgement, not a law.** They are shown so you "
-                    "can disagree with them. A score is a summary of what has already "
-                    "been filed — it does not predict a share price.")
-
-            parts_rows = [r for r in scored if r["parts"]]
-            if parts_rows:
-                with st.expander("Score by component"):
-                    hdr = "".join(f"<th>{E(ranking.LABELS[k])}</th>"
-                                  for k in ranking.WEIGHTS)
-                    brows = ""
-                    for r in parts_rows:
-                        cells = ""
-                        for k in ranking.WEIGHTS:
-                            v = r["parts"].get(k)
-                            cells += ("<td>—</td>" if v is None else
-                                      f'<td>{v:.0f}</td>')
-                        brows += (f'<tr><td>{E(r["name"])}</td>{cells}</tr>')
-                    st.markdown(
-                        '<div style="overflow-x:auto"><table class="comp wtable">'
-                        f"<thead><tr><th>Company</th>{hdr}</tr></thead>"
-                        f"<tbody>{brows}</tbody></table></div>",
-                        unsafe_allow_html=True)
-                    st.caption("Each column is 0-100 against the others shown. A dash "
-                               "means the filings did not contain enough to score it.")
 
             others = [r for r in scored if not r["self"]]
             if others:
