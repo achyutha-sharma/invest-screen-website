@@ -15,7 +15,9 @@ import streamlit as st
 
 from datetime import date
 
+import expectations as expect
 from filing_text import latest_filings, read_filing
+from peers import suggest
 import funds as funds_data
 from prices import PriceClient
 from quiz import (build as quiz_build, grade as quiz_grade, new_seed,
@@ -672,6 +674,15 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 .byline a:hover{text-decoration:underline;color:var(--acc-2)}
 
 
+
+
+/* comparison: a bar in the cell, so the spread reads at a glance */
+.cmp td:nth-child(2){white-space:nowrap}
+.pbar{display:inline-block;width:64px;height:6px;border-radius:3px;background:var(--line);
+  margin-left:.5rem;vertical-align:middle;overflow:hidden}
+.pbar i{display:block;height:100%;background:var(--c3);border-radius:3px}
+.cmp tr.self .pbar i{background:var(--acc)}
+@media (max-width:640px){.pbar{width:40px}}
 
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
@@ -1518,12 +1529,128 @@ st.markdown(f'<span class="tk">{E(ticker)}</span><h2 class="co">{E(eq.entity)}{d
             f'{" · " if prof.get("industry") else ""}CIK {E(cik)} · '
             f'{E(latest.label)} · Form 10-K</p>', unsafe_allow_html=True)
 
-_views = ["Research", "Teach me"]
+_views = ["Research", "Compare", "Teach me"]
 _want = 1 if st.session_state.pop("goto_teach", False) else None
 if _want is not None:
     st.session_state.pop("mode", None)
 mode = st.radio("View", _views, index=_want if _want is not None else 0,
                 horizontal=True, label_visibility="collapsed", key="mode")
+
+# --------------------------------------------------------------------------
+# Compare
+# --------------------------------------------------------------------------
+# Similar companies, ordered by how much of each share price rests on profits
+# not yet earned. That ordering is the risk-versus-stability question stated
+# as arithmetic: a company whose price is mostly expectation swings harder on
+# news, because there is less already-banked profit underneath it.
+#
+# Deliberately not labelled "high risk" or "safe" by us. The figures carry the
+# distinction; assigning the label would be a judgement about the reader's
+# situation, which no filing can support.
+
+if mode == "Compare":
+    peer_tickers, why_peers = suggest(ticker, sic=str(prof.get("sic") or ""))
+
+    if not peer_tickers:
+        st.markdown('<p class="lead">No comparison set is available for this company.</p>',
+                    unsafe_allow_html=True)
+        st.caption(why_peers)
+    else:
+        rows = []
+        for tk in [ticker] + peer_tickers:
+            try:
+                hits = search(tk)
+                if not hits:
+                    continue
+                h = hits[0]
+                peq = eq if h["cik"] == cik else extract_equity(facts(h["cik"]), cik=h["cik"])
+                pq = q if h["cik"] == cik else quote(h["ticker"])
+                pl = peq.latest
+                peps = pl.get("eps")
+                pprice = pq.price if pq.available else None
+                split = expect.expectations(pprice, peps)
+                pni, prev = pl.get("net_income"), pl.get("revenue")
+                rows.append({
+                    "self": h["cik"] == cik,
+                    "ticker": h["ticker"],
+                    "cik": h["cik"],
+                    "name": peq.entity.split(",")[0].title(),
+                    "pe": (pprice / peps) if (pprice and peps and peps > 0) else None,
+                    "pct": split.pct if split else None,
+                    "margin": (100 * pni / prev) if (pni is not None and prev) else None,
+                    "day": pq.day_change_pct,
+                })
+            except Exception:
+                continue
+
+        scored = [r for r in rows if r["pct"] is not None]
+        if len(scored) < 2:
+            st.markdown('<p class="lead">Not enough priced peers to compare.</p>',
+                        unsafe_allow_html=True)
+            st.caption("A comparison needs a share price and positive earnings for at "
+                       "least two companies.")
+        else:
+            scored.sort(key=lambda r: r["pct"], reverse=True)
+            st.markdown(
+                '<p class="lead">Ordered by <b>how much of each share price rests on '
+                "profits not yet earned</b>. Higher up, more of what you pay is a bet on "
+                "the future — which is what makes a share swing harder on news.</p>",
+                unsafe_allow_html=True)
+
+            head = ("<tr><th>Company</th><th>Price is expectations</th><th>P/E</th>"
+                    "<th>Net margin</th></tr>")
+            body = ""
+            for r in scored:
+                bar = (f'<span class="pbar"><i style="width:{r["pct"]:.0f}%"></i></span>')
+                body += (
+                    f'<tr class="{"self" if r["self"] else ""}">'
+                    f'<td>{E(r["name"])}'
+                    + (f'<span class="mini {"up" if r["day"] >= 0 else "down"}">'
+                       f'{"▲" if r["day"] >= 0 else "▼"}{abs(r["day"]):.2f}%</span>'
+                       if r["day"] is not None else "")
+                    + f'</td><td>{r["pct"]:.0f}% {bar}</td>'
+                    f'<td>{r["pe"]:,.1f}×</td>'
+                    + (f'<td>{r["margin"]:,.1f}%</td>' if r["margin"] is not None
+                       else "<td>—</td>")
+                    + "</tr>")
+            st.markdown(f'<div class="panel"><table class="comp cmp">'
+                        f"<thead>{head}</thead><tbody>{body}</tbody></table></div>",
+                        unsafe_allow_html=True)
+
+            top, bottom = scored[0], scored[-1]
+            st.markdown(
+                f'<div class="readout"><p><b>{E(top["name"])}</b> has the most riding on '
+                f'results still to come — about <b>{top["pct"]:.0f}%</b> of its price. '
+                f'<b>{E(bottom["name"])}</b> has the least, at <b>{bottom["pct"]:.0f}%</b>, '
+                "so more of what you pay there is profit the company has already "
+                "reported.</p>"
+                "<p>Neither is better. A price built on expectations rises further when "
+                "results beat and falls further when they miss; a price built on earned "
+                "profit does less of both. <b>Which suits you depends on how long you can "
+                "leave money alone — and that is not something a filing can tell you.</b>"
+                "</p></div>", unsafe_allow_html=True)
+
+            others = [r for r in scored if not r["self"]]
+            if others:
+                cols = st.columns(min(len(others), 4))
+                for col, r in zip(cols, others):
+                    if col.button(f"Open {r['ticker']}", key=f"cmp_{r['ticker']}",
+                                  use_container_width=True):
+                        st.session_state["cik"] = r["cik"]
+                        st.session_state["ticker"] = r["ticker"]
+                        st.session_state["name"] = r["name"]
+                        for k in ("step", "quiz", "quiz_round", "quiz_seed", "quiz_seen"):
+                            st.session_state.pop(k, None)
+                        st.rerun()
+
+            st.caption(why_peers + " A share price is split against a no-growth multiple "
+                       "of 10x — a rough marker for what a business with no growth ahead "
+                       "of it would fetch, not a target.")
+
+    st.markdown('<p class="disc">Figures come from SEC filings; share prices come from a '
+                "market feed. Educational research only — not advice.</p>" + BYLINE,
+                unsafe_allow_html=True)
+    st.stop()
 
 if mode == "Teach me":
     # Scope the green palette to this view only; research stays violet.
