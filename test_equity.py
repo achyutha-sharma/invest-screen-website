@@ -671,6 +671,84 @@ def test_mda_dedupes_segments():
     print("mda segment dedupe ok")
 
 
+
+
+def test_expectations():
+    """The split between earned profit and expected profit."""
+    from expectations import build, expectations, operating_leverage
+
+    # A high price on modest earnings is mostly expectation.
+    e = expectations(62.00, 2.16)
+    assert e is not None
+    assert round(e.justified) == 22 and round(e.expectation) == 40
+    assert 60 < e.pct < 70 and e.heavy and not e.light
+
+    # A low price on strong earnings is almost entirely earned.
+    cheap = expectations(40.00, 6.00)
+    assert cheap.pct == 0 and cheap.light
+
+    # The justified figure can never exceed the price, or expectation goes
+    # negative and the split stops meaning anything.
+    assert expectations(15.00, 6.00).expectation == 0
+
+    # A loss-maker has no "justified by earnings" figure at all.
+    assert expectations(30.0, -1.2) is None
+    assert expectations(30.0, 0) is None
+    assert expectations(None, 2.0) is None
+    assert expectations(30.0, None) is None
+
+    # Operating leverage: profit swinging harder than sales.
+    rev = [100, 110, 121, 133]
+    ebit = [10, 13, 17, 22]                       # profit growing faster
+    lev = operating_leverage(rev, ebit)
+    assert lev is not None and lev > 1.5, lev
+
+    # Flat years carry no information and must not divide by ~zero.
+    assert operating_leverage([100, 100, 100], [10, 10, 10]) is None
+    assert operating_leverage([], []) is None
+    # A year that starts from a loss cannot give a meaningful percentage.
+    assert operating_leverage([100, 110], [-5, 10]) is None
+
+    rows = build(62.00, 2.16, rev, ebit, debt=9_300, cash=9_900,
+                 shares=1_480, foreign_pct=57)
+    names = [r.name for r in rows]
+    assert "Price resting on expectations" in names
+    assert "Sales earned abroad" in names
+    # More cash than debt, so no debt-per-share row.
+    assert "Debt behind each share" not in names
+    for r in rows:
+        assert r.what and r.why and len(r.why) > 30
+    print("expectations ok")
+
+
+def test_risk_diff():
+    """Risk factor comparison must ignore rewording, not real change."""
+    from filing_text import _norm_risk
+
+    same = [
+        ("Our business may be adversely affected by consumer discretionary spending",
+         "Our business could be materially affected by consumer discretionary spending"),
+        ("Excess inventory could require additional markdowns",
+         "Excess inventory may require additional markdowns"),
+    ]
+    for a, b in same:
+        assert _norm_risk(a) == _norm_risk(b), (a, b)
+
+    different = [
+        ("Excess inventory could require additional markdowns",
+         "Increased spending on artificial intelligence infrastructure"),
+        ("We depend on a limited number of manufacturing partners",
+         "We face competition from established and emerging brands"),
+    ]
+    for a, b in different:
+        assert _norm_risk(a) != _norm_risk(b), (a, b)
+
+    # The key must not be empty for a real heading, or everything collapses
+    # into one bucket and every risk looks unchanged.
+    assert len(_norm_risk("Cybersecurity and data protection risks")) > 10
+    print("risk diff ok")
+
+
 def main():
     test_clean()
     test_valuation()
@@ -685,6 +763,8 @@ def main():
     test_span_picks_real_section()
     test_quarter_year_ago()
     test_mda_dedupes_segments()
+    test_expectations()
+    test_risk_diff()
     print("\nAll checks passed.")
 
 
