@@ -2045,7 +2045,9 @@ if len(rev_hist) >= 3 and len(eps_hist) >= 3:
 # --------------------------------------------------------------------------
 
 if eq.quarters:
-    sh("This year so far", f"{len(eq.quarters)} of 4 quarters filed")
+    _shown = len({qq.fp for qq in eq.quarters})
+    sh("This year so far",
+       f"{_shown} of 4 quarter{'s' if _shown != 1 else ''} filed")
     ytd = sum(qq.get("revenue") for qq in eq.quarters if qq.get("revenue"))
     run = ytd / len(eq.quarters) * 4
     last_year = rev
