@@ -1671,33 +1671,54 @@ if mode == "Compare":
     added = st.session_state.setdefault(added_key, [])
 
     box = st.container()
+    box.markdown('<p class="picker">Add a company to compare</p>',
+                 unsafe_allow_html=True)
     typed = box.text_input(
-        "Add a company", placeholder="Ticker, e.g. COST",
-        key=f"addbox_{cik}", label_visibility="collapsed").strip().upper()
+        "Add a company", placeholder="Company name or ticker",
+        key=f"addbox_{cik}", label_visibility="collapsed").strip()
     handled_key = f"addseen_{cik}"
-    if typed and typed == st.session_state.get(handled_key):
+    if typed and typed.upper() == st.session_state.get(handled_key):
         typed = ""
 
-    if typed and typed != ticker.upper() and typed not in added:
+    # Matches are listed by name and chosen deliberately. Taking the first hit
+    # silently was wrong for the same reason the main search lists its results:
+    # "delta" reaches an airline and an apparel maker.
+    if typed and typed.upper() != ticker.upper():
         try:
             found = search(typed)
         except Exception:
             found = []
-        st.session_state[handled_key] = typed
-        if found:
-            added.append(found[0]["ticker"].upper())
-            st.session_state[added_key] = added
-            st.rerun()
-        else:
+        if not found:
             box.caption(f"Nothing on the SEC matches “{E(typed)}”.")
+        else:
+            hits = [h for h in found
+                    if h["ticker"].upper() not in added
+                    and h["ticker"].upper() != ticker.upper()][:5]
+            if hits:
+                pick = box.container()
+                pick.markdown('<span class="hitrow"></span>', unsafe_allow_html=True)
+                for h in hits:
+                    if pick.button(h["name"].title(), key=f"add_{cik}_{h['cik']}",
+                                   use_container_width=True):
+                        added.append(h["ticker"].upper())
+                        st.session_state[added_key] = added
+                        st.session_state[handled_key] = typed.upper()
+                        st.rerun()
 
     if added:
-        cols = st.columns(min(len(added), 5))
+        box.markdown('<p class="picker">Added — tap to remove</p>',
+                     unsafe_allow_html=True)
+        cols = st.columns(min(len(added), 4))
         for col, tk in zip(cols, list(added)):
-            if col.button(f"✕ {tk}", key=f"rm_{cik}_{tk}", use_container_width=True):
+            # Named in full, since a ticker is only obvious once you know it.
+            try:
+                nm = search(tk)[0]["name"].title()
+            except Exception:
+                nm = tk
+            if col.button(f"✕  {nm}", key=f"rm_{cik}_{tk}", use_container_width=True):
                 st.session_state[added_key] = [x for x in added if x != tk]
+                st.session_state.pop(handled_key, None)
                 st.rerun()
-        box.caption("Tap a name to remove it.")
 
     # The reader's own picks come first, then the suggested set, without
     # duplicating anything already present.
