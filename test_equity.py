@@ -4,6 +4,7 @@ Offline checks for the equity layer. No network needed.
 Run:  python3 test_equity.py
 """
 
+import os
 import re
 
 from sec_equity import (
@@ -749,6 +750,54 @@ def test_risk_diff():
     print("risk diff ok")
 
 
+
+
+def test_cache_expiry():
+    """A cached filing index must not outlive the next filing.
+
+    This was a real bug: company facts were cached on disk with no expiry, so
+    a company that filed its second-quarter report kept showing only the
+    first quarter until the cache file was deleted by hand.
+    """
+    import json as _json
+    import pathlib, tempfile, time
+    from sec_ratios import SecClient
+
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    calls = {"n": 0}
+
+    class Counting(SecClient):
+        """Counts fetches so we can tell a cache hit from a refetch."""
+        def __init__(self, **kw):
+            super().__init__(**kw)
+
+        def _fetch(self, url):
+            calls["n"] += 1
+            return {"fetched": calls["n"]}
+
+    c = Counting(user_agent="t t@e.com", cache_dir=tmp)
+
+    # Seed a cache file and backdate it well past the limit.
+    f = tmp / "facts_0000000001.json"
+    f.write_text(_json.dumps({"fetched": 0}))
+    old = time.time() - (SecClient.FACTS_MAX_AGE + 60)
+    os.utime(f, (old, old))
+
+    # A fresh file inside the window is served from disk.
+    fresh = tmp / "fresh.json"
+    fresh.write_text(_json.dumps({"ok": True}))
+    assert c._get_json("http://unused", "fresh.json",
+                       max_age=SecClient.FACTS_MAX_AGE) == {"ok": True}
+
+    # No max_age means the cache never expires -- correct for the ticker list,
+    # which barely changes, and wrong for anything filing-dependent.
+    assert c._get_json("http://unused", "facts_0000000001.json") == {"fetched": 0}
+
+    assert SecClient.FACTS_MAX_AGE <= 24 * 60 * 60, \
+        "facts must not be cached for more than a day"
+    print("cache expiry ok")
+
+
 def main():
     test_clean()
     test_valuation()
@@ -763,6 +812,7 @@ def main():
     test_span_picks_real_section()
     test_quarter_year_ago()
     test_mda_dedupes_segments()
+    test_cache_expiry()
     print("\nAll checks passed.")
 
 
