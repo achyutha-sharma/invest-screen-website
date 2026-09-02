@@ -696,6 +696,10 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
   max-width:70ch}
 .shapes p b{color:#FFFFFF;font-weight:700}
 
+
+.ret{font-family:var(--mono);font-size:.86rem;font-weight:700}
+.ret.up{color:var(--up)} .ret.down{color:var(--down)} .ret.none{color:var(--text-3)}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -751,6 +755,29 @@ def sparkline(hist, months: int = 60, w: int = 120, h: int = 34) -> str:
             'stroke-linejoin="round" stroke-linecap="round"/>'
             f'<circle cx="{X(len(vals) - 1):.1f}" cy="{Y(vals[-1]):.1f}" r="2.4" '
             f'fill="{colour}"/></svg>')
+
+
+# What the S&P 500 has returned over long stretches, before inflation. Used
+# only as the line between "faster than the market" and "slower", never as a
+# target or a prediction.
+MARKET_LONG_RUN = 10.0
+
+
+def annualised(hist, years: int = 10) -> float | None:
+    """Compound annual price return over the period held in `hist`.
+
+    Price only: dividends are not in a price series, so a company paying a
+    good dividend is understated here. The page says so rather than quietly
+    comparing a total return against a price one.
+    """
+    if not hist or len(hist) < 24:
+        return None
+    tail = hist[-(years * 12):]
+    first, last = tail[0][1], tail[-1][1]
+    span = len(tail) / 12
+    if not first or first <= 0 or span < 2:
+        return None
+    return 100 * ((last / first) ** (1 / span) - 1)
 
 
 def return_shape(pct_expectations: float, dividend_yield: float) -> tuple[str, str]:
@@ -1611,6 +1638,8 @@ if mode == "Compare":
                 pni, prev = pl.get("net_income"), pl.get("revenue")
                 pdps = pl.get("dps")
                 pdy = (100 * pdps / pprice) if (pdps and pprice) else 0.0
+                phist = prices.monthly(h["ticker"]) if prices.has_history else []
+                pcagr = annualised(phist)
                 rows.append({
                     "self": h["cik"] == cik,
                     "ticker": h["ticker"],
@@ -1621,6 +1650,8 @@ if mode == "Compare":
                     "margin": (100 * pni / prev) if (pni is not None and prev) else None,
                     "day": pq.day_change_pct,
                     "dy": pdy,
+                    "cagr": pcagr,
+                    "years": (len(phist[-120:]) / 12) if phist else 0,
                 })
             except Exception:
                 continue
@@ -1640,13 +1671,19 @@ if mode == "Compare":
                 unsafe_allow_html=True)
 
             head = ("<tr><th>Company</th><th>Paying for future growth</th>"
-                    "<th>How the return arrives</th><th>P/E</th></tr>")
+                    "<th>Price return a year</th><th>P/E</th></tr>")
             body = ""
             for r in scored:
                 bar = (f'<span class="pbar"><i style="width:{r["pct"]:.0f}%"></i></span>')
-                kind, _ = return_shape(r["pct"], r["dy"])
-                label = {"growth": "growth", "income": "income",
-                         "earned": "earned profit"}[kind]
+                # Green above the market's long-run average, red below. The
+                # comparison is against the index because that is the
+                # alternative -- owning all 500 instead of this one.
+                if r["cagr"] is None:
+                    ret = '<span class="ret none">no history</span>'
+                else:
+                    fast = r["cagr"] >= MARKET_LONG_RUN
+                    ret = (f'<span class="ret {"up" if fast else "down"}">'
+                           f'{r["cagr"]:+,.1f}%</span>')
                 body += (
                     f'<tr class="{"self" if r["self"] else ""}">'
                     f'<td>{E(r["name"])}'
@@ -1654,7 +1691,7 @@ if mode == "Compare":
                        f'{"▲" if r["day"] >= 0 else "▼"}{abs(r["day"]):.2f}%</span>'
                        if r["day"] is not None else "")
                     + f'</td><td>{r["pct"]:.0f}% {bar}</td>'
-                    f'<td><span class="shape {kind}">{label}</span></td>'
+                    f"<td>{ret}</td>"
                     f'<td>{r["pe"]:,.1f}×</td>'
                     + "</tr>")
             st.markdown(f'<div class="panel"><table class="comp cmp">'
@@ -1689,7 +1726,13 @@ if mode == "Compare":
                 "</p></div>", unsafe_allow_html=True)
 
             st.markdown('<div class="shapes">' + "".join(
-                f'<p><b>{E(r["name"])}</b> — {return_shape(r["pct"], r["dy"])[1]}</p>'
+                f'<p><b>{E(r["name"])}</b> — '
+                + (f'the share price compounded at <b>{r["cagr"]:,.1f}% a year</b> over '
+                   f'about {r["years"]:.0f} years, '
+                   + ("faster" if r["cagr"] >= MARKET_LONG_RUN else "slower")
+                   + " than the market's long-run average. "
+                   if r["cagr"] is not None else "")
+                + return_shape(r["pct"], r["dy"])[1] + "</p>"
                 for r in scored) + "</div>", unsafe_allow_html=True)
 
             others = [r for r in scored if not r["self"]]
@@ -1705,9 +1748,14 @@ if mode == "Compare":
                             st.session_state.pop(k, None)
                         st.rerun()
 
-            st.caption(why_peers + " A share price is split against a no-growth multiple "
-                       "of 10x — a rough marker for what a business with no growth ahead "
-                       "of it would fetch, not a target.")
+            st.caption(
+                why_peers
+                + " A share price is split against a no-growth multiple of 10x — a rough "
+                "marker for what a business with no growth ahead of it would fetch, not a "
+                f"target. Returns are price only and are green above {MARKET_LONG_RUN:.0f}% "
+                "a year, roughly what the S&P 500 has averaged over decades; dividends are "
+                "not included, so a company paying one has returned more than shown. Past "
+                "returns say nothing about future ones.")
 
     st.markdown('<p class="disc">Figures come from SEC filings; share prices come from a '
                 "market feed. Educational research only — not advice.</p>" + BYLINE,
@@ -1983,9 +2031,13 @@ if eq.quarters:
     run = ytd / len(eq.quarters) * 4
     last_year = rev
     cells = ""
-    for i in range(4):
-        if i < len(eq.quarters):
-            qq = eq.quarters[i]
+    # Keyed by the actual fiscal quarter, not by position. A company whose
+    # first quarter is missing from the data would otherwise show its second
+    # quarter in the Q1 slot.
+    by_q = {qq.fp: qq for qq in eq.quarters}
+    for i in range(1, 5):
+        qq = by_q.get(f"Q{i}")
+        if qq is not None:
             chg = qq.change("revenue")
             tone = "" if chg is None else ("up" if chg >= 0 else "down")
             cells += (f'<div class="qc"><span class="ql">{qq.fp}</span>'
@@ -1996,9 +2048,10 @@ if eq.quarters:
                          '<span class="qs">no year-ago figure filed</span>')
                       + "</div>")
         else:
-            cells += ('<div class="qc pending"><span class="ql">Q'
-                      f'{i + 1}</span><span class="qv">—</span>'
+            cells += ('<div class="qc pending"><span class="ql">'
+                      f'Q{i}</span><span class="qv">—</span>'
                       '<span class="qs">not filed yet</span></div>')
+
     rr = ""
     if last_year:
         chg = 100 * (run / last_year - 1)
