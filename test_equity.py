@@ -1038,6 +1038,88 @@ def test_surprises():
     print("surprises ok")
 
 
+
+
+def test_ranking():
+    """The weighted comparison score.
+
+    The rules that matter: a missing figure never penalises a company, a
+    company with too little filed gets no score rather than a bad one, and no
+    single measure can dominate the ordering.
+    """
+    from ranking import COMPONENTS, Figures, MIN_COVERAGE, WEIGHTS, rank
+
+    assert sum(WEIGHTS.values()) == 100, "weights must total 100"
+    assert set(WEIGHTS) == set(COMPONENTS), "every component needs a weight"
+
+    def mk(t, **kw):
+        base = dict(
+            ticker=t, name=t, price=100.0, eps=5.0, shares=1_000,
+            revenue=[800, 900, 1_000, 1_150, 1_300],
+            net_income=[80, 95, 110, 130, 150],
+            fcf=[70, 85, 100, 120, 140],
+            ebit=200, ebitda=250, ocf=180, debt=300, cash=400,
+            equity=900, interest=20, current_assets=600,
+            current_liabilities=300, dps=1.0, buybacks=50)
+        base.update(kw)
+        return Figures(**base)
+
+    strong = mk("STRONG")
+    weak = mk("WEAK", price=20.0, eps=4.0,
+              revenue=[1_000, 1_010, 1_000, 995, 1_000],
+              net_income=[70, 68, 66, 65, 64],
+              fcf=[60, 58, 57, 56, 55],
+              ebit=90, ebitda=120, ocf=85, debt=900, cash=100,
+              equity=700, interest=60, current_assets=500,
+              current_liabilities=480, buybacks=None)
+
+    scored = {s.ticker: s for s in rank([strong, weak])}
+    assert scored["STRONG"].total > scored["WEAK"].total
+    assert all(0 <= v <= 100 for v in scored["STRONG"].components.values())
+
+    # Every component present means full coverage.
+    assert scored["STRONG"].coverage == 1.0
+    assert scored["STRONG"].missing == []
+
+    # A company with nothing but revenue cannot be scored, and must say so
+    # rather than land at the bottom as though it had been measured.
+    bare = Figures(ticker="BARE", name="BARE", revenue=[100, 110, 120, 130])
+    out = {s.ticker: s for s in rank([strong, weak, bare])}
+    assert out["BARE"].total is None, out["BARE"].coverage
+    assert out["BARE"].coverage < MIN_COVERAGE
+    assert out["BARE"].missing, "must name what was missing"
+
+    # A missing measure must not drag a company down: the same company scored
+    # with and without its dividend should not be ranked worse for lacking it.
+    no_div = mk("NODIV", dps=None, buybacks=None)
+    pair = {s.ticker: s for s in rank([strong, no_div])}
+    assert pair["NODIV"].components["returns"] is None
+    assert pair["NODIV"].total is not None, "other components still score"
+
+    # A loss-maker gets no P/E and no growth rate rather than a negative one.
+    loser = mk("LOSER", eps=-1.0, net_income=[-50, -60, -70, -80, -90],
+               fcf=[-20, -25, -30, -35, -40], ebit=-30, ebitda=-10)
+    assert loser.pe is None and loser.eps_growth is None
+    assert loser.roic is None and loser.ev_ebitda is None
+    assert loser.net_debt_ebitda is None
+
+    # Buybacks can drive equity negative; return on capital must refuse rather
+    # than divide by it. This is the Home Depot case.
+    hd = mk("HD", equity=-1_500, debt=400, cash=100)
+    assert hd.roic is None, hd.roic
+
+    # A single company has nothing to rank against, so every measure sits at
+    # the midpoint rather than pretending to a verdict.
+    alone = rank([strong])[0]
+    assert all(v == 50.0 for v in alone.components.values() if v is not None)
+
+    # Equal companies must score equally, or the order is arbitrary.
+    a, b = mk("A"), mk("B")
+    tied = rank([a, b])
+    assert tied[0].total == tied[1].total, (tied[0].total, tied[1].total)
+    print("ranking ok")
+
+
 def main():
     test_clean()
     test_valuation()
@@ -1045,6 +1127,7 @@ def main():
     test_quarters()
     test_guards()
     test_scorecard()
+    test_ranking()
     test_prices()
     test_history()
     test_surprises()
