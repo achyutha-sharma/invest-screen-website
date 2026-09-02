@@ -888,6 +888,7 @@ def figures_for(tick: str, e, latest_p, quote_, hist) -> ranking.Figures:
         price=quote_.price if quote_ and quote_.available else None,
         eps=latest_p.get("eps"), shares=latest_p.get("shares"),
         revenue=ser("revenue"), net_income=ser("net_income"), fcf=fcf,
+        eps_series=ser("eps"),
         ebit=ebit, ebitda=ebitda, ocf=latest_p.get("ocf"),
         debt=latest_p.get("total_debt"), cash=latest_p.get("cash"),
         equity=latest_p.get("equity"), interest=latest_p.get("interest"),
@@ -1941,6 +1942,7 @@ if mode == "Compare":
                     ticker=h["ticker"], name=peq.entity.split(",")[0].title(),
                     cik=h["cik"], price=pprice, eps=peps, shares=pl.get("shares"),
                     revenue=_ser("revenue"), net_income=_ser("net_income"),
+                    eps_series=_ser("eps"),
                     fcf=pfcf, ebit=pl.get("ebit"), ebitda=pebitda,
                     ocf=pl.get("ocf"), debt=pl.get("total_debt"),
                     cash=pl.get("cash"), equity=pl.get("equity"),
@@ -1993,11 +1995,20 @@ if mode == "Compare":
                 "<b>Add another company above to compare against.</b></p></div>",
                 unsafe_allow_html=True)
         else:
-            # Ordered by revenue growth actually reported last year -- a fact
-            # about what happened. The weighted score lives on the research
-            # page, where there is room to explain it.
-            scored.sort(key=lambda r: (r["growth"] is not None, r["growth"] or 0),
-                        reverse=True)
+            try:
+                marks = {m.ticker: m for m in
+                         ranking.rank([r["figs"] for r in scored])}
+            except Exception:
+                marks = {}
+            for r in scored:
+                m = marks.get(r["ticker"])
+                r["score"] = m.total if m else None
+                r["parts"] = m.components if m else {}
+
+            # Ordered by the weighted score where it can be computed, and by
+            # reported sales growth otherwise.
+            scored.sort(key=lambda r: (r["score"] is not None, r["score"] or 0,
+                                       r["growth"] or 0), reverse=True)
 
 
             # Short on purpose. The number is the least obvious thing on the
@@ -2007,17 +2018,27 @@ if mode == "Compare":
                 '<div class="explain"><p><b>Ranked by how much sales actually grew last '
                 "year.</b> <b>Expected next quarter</b> is what analysts predict for "
                 "earnings per share in the quarter still to be reported — a forecast, "
-                "not a filed figure. The weighted score is on the Research page.</p>"
-                "</div>", unsafe_allow_html=True)
+                "not a filed figure. <b>Score</b> is the weighted rating across seven "
+                "components, charted below.</p></div>", unsafe_allow_html=True)
 
             any_return = any(r["cagr"] is not None for r in scored)
             any_next = any(r["next"] for r in scored)
-            head = ("<tr><th>#</th><th>Company</th><th>Sales growth</th>"
+            any_score = any(r["score"] is not None for r in scored)
+            head = ("<tr><th>#</th><th>Company</th>"
+                    + ("<th>Score</th>" if any_score else "")
+                    + "<th>Sales growth</th>"
                     + ("<th>Price return a year</th>" if any_return else "")
                     + ("<th>Expected next quarter</th>" if any_next else "")
                     + "<th>P/E</th></tr>")
             body = ""
             for rank, r in enumerate(scored, start=1):
+                if r["score"] is None:
+                    mark = '<span class="ret none">—</span>'
+                else:
+                    band = ("up" if r["score"] >= 60 else
+                            "down" if r["score"] < 40 else "mid")
+                    mark = f'<span class="mark {band}">{r["score"]:.0f}</span>'
+
                 if r["growth"] is None:
                     grow = '<span class="ret none">—</span>'
                 else:
@@ -2048,7 +2069,9 @@ if mode == "Compare":
                     + (f'<span class="mini {"up" if r["day"] >= 0 else "down"}">'
                        f'{"▲" if r["day"] >= 0 else "▼"}{abs(r["day"]):.2f}%</span>'
                        if r["day"] is not None else "")
-                    + f"</td><td>{grow}</td>"
+                    + "</td>"
+                    + (f"<td>{mark}</td>" if any_score else "")
+                    + f"<td>{grow}</td>"
                     + (f"<td>{ret}</td>" if any_return else "")
                     + (f"<td>{nxt}</td>" if any_next else "")
                     + f'<td>{r["pe"]:,.1f}×</td>'
@@ -2069,6 +2092,61 @@ if mode == "Compare":
                 "Estimates are analysts' opinions, not filings — and companies guide "
                 "them toward a number they are confident of clearing.</p></div>",
                 unsafe_allow_html=True)
+
+
+            # A grouped bar per component. Seven numbers in a row are hard to
+            # read across four companies; the shape of a company's strengths
+            # is not.
+            charted = [r for r in scored if r["parts"]]
+            if charted:
+                keys = list(ranking.WEIGHTS)
+                COLS = ["#A98BFF", "#5FD69B", "#F0C46A", "#6FC6E8", "#FF7B8A"]
+                W, H = 780, 250
+                left, bottom, top = 34, 62, 16
+                gw = (W - left - 8) / len(keys)
+                bw = min(14, (gw - 10) / max(len(charted), 1))
+
+                grid = ""
+                for v in (0, 25, 50, 75, 100):
+                    y = top + (1 - v / 100) * (H - top - bottom)
+                    grid += (f'<line x1="{left}" y1="{y:.1f}" x2="{W - 8}" y2="{y:.1f}" '
+                             'stroke="#332B60"/>'
+                             f'<text x="{left - 6}" y="{y + 3.5:.1f}" text-anchor="end" '
+                             'font-family="IBM Plex Mono,monospace" font-size="9" '
+                             f'fill="#7F779E">{v}</text>')
+
+                bars, labels = "", ""
+                for gi, k in enumerate(keys):
+                    gx = left + gi * gw
+                    for ci, r in enumerate(charted):
+                        v = r["parts"].get(k)
+                        if v is None:
+                            continue
+                        x = gx + (gw - bw * len(charted)) / 2 + ci * bw
+                        h = (v / 100) * (H - top - bottom)
+                        y = top + (H - top - bottom) - h
+                        bars += (f'<rect x="{x:.1f}" y="{y:.1f}" width="{bw - 2:.1f}" '
+                                 f'height="{max(h, 1):.1f}" rx="2" '
+                                 f'fill="{COLS[ci % len(COLS)]}"/>')
+                    words = ranking.LABELS[k].split()
+                    for li, word in enumerate(words):
+                        labels += (f'<text x="{gx + gw / 2:.1f}" '
+                                   f'y="{H - bottom + 16 + li * 11}" '
+                                   'text-anchor="middle" font-size="9" '
+                                   f'fill="#B3ACD1">{E(word)}</text>')
+
+                key = "".join(
+                    f'<span><i style="background:{COLS[i % len(COLS)]}"></i>'
+                    f'{E(r["name"])}</span>' for i, r in enumerate(charted))
+
+                st.markdown(
+                    f'<div class="panel chart"><div class="ckey">{key}</div>'
+                    f'<svg viewBox="0 0 {W} {H}" role="img" '
+                    'aria-label="Score by component for each company">'
+                    f"{grid}{bars}{labels}</svg></div>", unsafe_allow_html=True)
+                st.caption("Each component scored 0-100 against the others shown, then "
+                           "weighted into the score. A missing bar means the filings did "
+                           "not contain enough to score it.")
 
             others = [r for r in scored if not r["self"]]
             if others:
