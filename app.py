@@ -2174,7 +2174,10 @@ LINES = [
 ]
 
 def arrow(vals, better):
-    """Direction against the earliest of the three years shown."""
+    """Direction across the years actually displayed.
+
+    Needs both ends: one visible year is a value, not a trend.
+    """
     if len(vals) < 2:
         return ""
     first, last_v = vals[0][1], vals[-1][1]
@@ -2196,12 +2199,21 @@ if have:
     body = ""
     for name, vals, fmt, better, hint in have:
         got = dict(vals)
-        cells = ""
-        for l in labels:
-            v = got.get(l)
-            cells += f"<td>{fmt(v) if v is not None else '—'}</td>"
+        # Only the years the table actually shows. A measure filed for
+        # different years than revenue -- a dividend begun or ended part way
+        # through -- used to render as three dashes beside a trend computed
+        # from data no column displayed.
+        shown = [(l, got.get(l)) for l in labels]
+        if not any(v is not None for _, v in shown):
+            continue
+
+        cells = "".join(f"<td>{fmt(v) if v is not None else '—'}</td>"
+                        for _, v in shown)
+        # The trend is measured across the visible cells, so it can never
+        # disagree with the row above it.
+        visible = [(l, v) for l, v in shown if v is not None]
         body += (f'<tr><td class="mname"><b>{E(name)}</b><i>{hint}</i></td>'
-                 f'{cells}<td class="tcol">{arrow(vals, better)}</td></tr>')
+                 f'{cells}<td class="tcol">{arrow(visible, better)}</td></tr>')
     st.markdown(f'<div class="panel"><table class="years"><thead>{head}</thead>'
                 f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
     st.caption(f"Green is the direction you would rather see — for debt that means falling. "
