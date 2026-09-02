@@ -270,6 +270,64 @@ class Figures:
         return None
 
 
+# How each measure reads on screen: a name, a format, and a plain sentence
+# saying what it is. A score with no working behind it is an assertion, so
+# every component can show the figures it was built from.
+MEASURE_INFO: dict[str, tuple[str, str, str]] = {
+    "pe": ("P/E", "{:,.1f}\u00d7",
+           "price divided by earnings per share; lower is cheaper"),
+    "ev_ebitda": ("EV/EBITDA", "{:,.1f}\u00d7",
+                  "the whole business, debt included, against its operating "
+                  "profit before depreciation; lower is cheaper"),
+    "fcf_yield": ("Free-cash-flow yield", "{:,.1f}%",
+                  "spare cash as a percentage of what the company costs to buy; "
+                  "higher is cheaper"),
+    "revenue_growth": ("Revenue growth", "{:+,.1f}%", "sales, compounded over 3 years"),
+    "eps_growth": ("EPS growth", "{:+,.1f}%",
+                   "profit per share, compounded over 3 years"),
+    "fcf_growth": ("Cash flow growth", "{:+,.1f}%",
+                   "free cash flow, compounded over 3 years"),
+    "roic": ("Return on capital", "{:,.1f}%",
+             "operating profit against the capital funding the business"),
+    "operating_margin": ("Operating margin", "{:,.1f}%",
+                         "profit from operations per $100 of sales"),
+    "net_margin": ("Net margin", "{:,.1f}%", "profit per $100 of sales, after everything"),
+    "net_debt_ebitda": ("Net debt / EBITDA", "{:,.2f}\u00d7",
+                        "borrowings after cash, against yearly operating profit; "
+                        "lower is safer"),
+    "interest_cover": ("Interest cover", "{:,.1f}\u00d7",
+                       "operating profit against the interest bill"),
+    "current_ratio": ("Current ratio", "{:,.2f}\u00d7",
+                      "assets due within a year against bills due within a year"),
+    "cash_conversion": ("Cash conversion", "{:,.2f}\u00d7",
+                        "operating cash flow per $1 of reported profit"),
+    "margin_stability": ("Margin steadiness", "{:,.1f} pts",
+                         "the spread between the best and worst net margin of "
+                         "the last five years; smaller is steadier"),
+    "dividend_yield": ("Dividend yield", "{:,.2f}%", "cash paid per $100 of share price"),
+    "dividend_cover": ("Dividend cover", "{:,.1f}\u00d7",
+                       "earnings per share against the dividend paid from them"),
+    "buyback_yield": ("Buyback yield", "{:,.2f}%",
+                      "shares repurchased per $100 of market value"),
+    "volatility": ("Volatility", "{:,.1f}%",
+                   "annualised spread of monthly returns; lower is steadier"),
+    "worst_fall": ("Worst fall", "{:,.1f}%",
+                   "the largest drop from a peak in the period shown"),
+}
+
+# Measures stored negated so that higher always scores better. Displayed with
+# the sign flipped back, or the page would show a negative margin spread.
+_NEGATED = {"margin_stability", "volatility"}
+
+
+def display_value(attr: str, raw: float | None) -> str:
+    """A measure formatted the way it is normally quoted."""
+    if raw is None:
+        return "—"
+    fmt = MEASURE_INFO.get(attr, ("", "{:,.2f}", ""))[1]
+    return fmt.format(-raw if attr in _NEGATED else raw)
+
+
 # Each measure: attribute, whether higher is better, and its share of the
 # component. Weights within a component are equal unless stated.
 COMPONENTS: dict[str, list[tuple[str, bool]]] = {
@@ -319,6 +377,9 @@ class Score:
     components: dict[str, float | None]
     coverage: float
     missing: list[str]
+    # The working: per component, every measure with its raw figure, the
+    # score it earned, and where it placed among the companies compared.
+    detail: dict[str, list[dict]] = field(default_factory=dict)
 
 
 def rank(companies: list[Figures]) -> list[Score]:
@@ -334,13 +395,50 @@ def rank(companies: list[Figures]) -> list[Score]:
             vals = [getattr(c, attr) for c in companies]
             measure_scores[attr] = _rank_scores(vals, higher)
 
+    # How many companies had a figure for each measure, so a placing can be
+    # reported as "2nd of 4" rather than a bare number.
+    counts = {a: sum(1 for v in vals if v is not None)
+              for a, vals in measure_scores.items()}
+
     out: list[Score] = []
     for idx, c in enumerate(companies):
         comps: dict[str, float | None] = {}
+        detail: dict[str, list[dict]] = {}
         for comp, measures in COMPONENTS.items():
             got = [measure_scores[a][idx] for a, _ in measures
                    if measure_scores[a][idx] is not None]
             comps[comp] = sum(got) / len(got) if got else None
+
+            rows = []
+            for attr, higher in measures:
+                sc = measure_scores[attr][idx]
+                raw = getattr(c, attr)
+                n = counts[attr]
+                place = None
+                if sc is not None and n > 1:
+                    # Counted directly: one more than the number of companies
+                    # that scored strictly better. Inverting the score put
+                    # two companies tied for second into third place, because
+                    # a shared score sits between the positions it spans.
+                    better = sum(1 for v in measure_scores[attr]
+                                 if v is not None and v > sc)
+                    place = better + 1
+                rows.append({
+                    "attr": attr,
+                    "label": MEASURE_INFO.get(attr, (attr, "", ""))[0],
+                    "what": MEASURE_INFO.get(attr, ("", "", ""))[2],
+                    "value": display_value(attr, raw),
+                    "score": sc,
+                    "place": place,
+                    "of": n,
+                    # How many companies share this figure. All of them
+                    # sharing is worth saying differently: "joint 1 of 4"
+                    # beside a mid score reads as a contradiction.
+                    "shared": (0 if sc is None else
+                               sum(1 for v in measure_scores[attr] if v == sc)),
+                    "higher_better": higher,
+                })
+            detail[comp] = rows
 
         usable = {k: v for k, v in comps.items() if v is not None}
         weight_have = sum(WEIGHTS[k] for k in usable)
@@ -358,5 +456,6 @@ def rank(companies: list[Figures]) -> list[Score]:
             components=comps,
             coverage=coverage,
             missing=[LABELS[k] for k in WEIGHTS if comps.get(k) is None],
+            detail=detail,
         ))
     return out
