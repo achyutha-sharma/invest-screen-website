@@ -700,6 +700,14 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 .ret{font-family:var(--mono);font-size:.86rem;font-weight:700}
 .ret.up{color:var(--up)} .ret.down{color:var(--down)} .ret.none{color:var(--text-3)}
 
+
+.explain{background:rgba(169,139,255,.07);border:1px solid var(--acc-dim);
+  border-radius:9px;padding:.9rem 1.05rem;margin-bottom:.9rem}
+.explain p{margin:0 0 .5rem;font-size:.89rem;color:var(--text-2);line-height:1.62;
+  max-width:70ch}
+.explain p:last-child{margin-bottom:0}
+.explain b{color:#FFFFFF;font-weight:700}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -1668,33 +1676,18 @@ if mode == "Compare":
                 '<p class="lead">Ordered by <b>how much of each share price rests on '
                 "profits not yet earned</b>.</p>", unsafe_allow_html=True)
 
-            with st.expander("What does “paying for future growth” mean?", expanded=True):
-                st.markdown(
-                    "**Every share price is two things added together:** what the company "
-                    "earns today, and what people expect it to earn later.\n\n"
-                    "A business with no growth ahead of it — steady profits, no more, no "
-                    "less — tends to trade around **10 times its earnings**. So a company "
-                    "earning \\$2 a share would be worth about \\$20 on today's profits "
-                    "alone.\n\n"
-                    "If that share actually costs \\$100, then \\$20 is paid for profit "
-                    "already reported and the other \\$80 is paid for profit that has not "
-                    "happened yet. **That is 80% paying for future growth.**")
-                st.markdown(
-                    "#### What it means for the company\n"
-                    "A high figure is the market saying it expects this business to grow "
-                    "a lot. That is not a compliment or an insult — it is an expectation "
-                    "the company now has to meet.\n\n"
-                    "- **The company has to deliver.** Results that would be fine for an "
-                    "ordinary business can disappoint one priced for growth, and the "
-                    "share falls even though nothing went wrong.\n"
-                    "- **A low figure means little is expected.** Sometimes that is a good "
-                    "business nobody is watching. Sometimes investors expect profits to "
-                    "shrink, and they are right.\n"
-                    "- **Neither is better on its own.** It tells you what has been "
-                    "assumed, not whether the assumption is correct.")
-                st.caption("The 10x marker is a rough reference point, not a fair value. "
-                           "A loss-making company has no figure here at all, because there "
-                           "are no earnings to measure the price against.")
+            # Short on purpose. The number is the least obvious thing on the
+            # page, so it needs one plain sentence and one worked figure --
+            # not a lesson.
+            st.markdown(
+                '<div class="explain"><p>A company with steady profits and no growth '
+                "ahead of it is worth about <b>10 times what it earns</b>. Anything "
+                "above that is money paid for profits that have not happened yet.</p>"
+                "<p><b>At 82%, only 18 cents of every dollar you pay is backed by "
+                "profit the company has actually reported.</b> The rest is the market "
+                "expecting it to grow — so the company has to deliver, or the price "
+                "falls even when nothing goes wrong.</p></div>",
+                unsafe_allow_html=True)
 
             head = ("<tr><th>Company</th><th>Paying for future growth</th>"
                     "<th>Price return a year</th><th>P/E</th></tr>")
