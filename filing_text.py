@@ -332,7 +332,8 @@ def extract_competitors(text: str, limit: int = 8) -> tuple[list[str], str, str]
 def latest_filings(client, cik: str, forms=("10-K", "10-Q", "8-K"), limit: int = 8):
     """Recent filings from the submissions index, newest first."""
     try:
-        data = client._get_json(SUBMISSIONS.format(cik=cik), f"sub_{cik}.json")
+        data = client._get_json(SUBMISSIONS.format(cik=cik), f"sub_{cik}.json",
+                                max_age=getattr(client, "FACTS_MAX_AGE", 21_600))
     except Exception:
         return []
     recent = (data.get("filings") or {}).get("recent") or {}
