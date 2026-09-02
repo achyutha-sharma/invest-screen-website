@@ -155,6 +155,46 @@ CURATED: dict[str, list[str]] = {
     "COP": ["XOM", "CVX", "OXY"],
     "NEE": ["DUK", "SO", "AEP"],
     "DUK": ["NEE", "SO", "AEP"],
+
+    # Metals, materials and industrials. Narrow SIC codes, but narrow is not
+    # the same as covered -- these needed naming like everything else.
+    "KALU": ["CENX", "AA", "ATI"],
+    "AA": ["CENX", "KALU", "ATI"],
+    "CENX": ["AA", "KALU", "ATI"],
+    "ATI": ["CRS", "KALU", "AA"],
+    "CRS": ["ATI", "KALU", "AA"],
+    "X": ["NUE", "STLD", "CLF"],
+    "NUE": ["STLD", "X", "CLF"],
+    "STLD": ["NUE", "X", "CLF"],
+    "CLF": ["X", "NUE", "STLD"],
+    "FCX": ["SCCO", "TECK", "AA"],
+    "SCCO": ["FCX", "TECK", "AA"],
+    "NEM": ["GOLD", "AEM", "FCX"],
+    "GOLD": ["NEM", "AEM", "FCX"],
+    "DOW": ["LYB", "DD", "EMN"],
+    "LYB": ["DOW", "DD", "EMN"],
+    "DD": ["DOW", "LYB", "EMN"],
+    "SHW": ["PPG", "RPM", "DD"],
+    "PPG": ["SHW", "RPM", "DD"],
+    "VMC": ["MLM", "SUM", "EXP"],
+    "MLM": ["VMC", "SUM", "EXP"],
+    "NUE2": ["NUE", "STLD", "X"],
+
+    # Machinery, transport and building.
+    "CMI": ["CAT", "DE", "PCAR"],
+    "PCAR": ["CMI", "CAT", "DE"],
+    "EMR": ["HON", "ETN", "ROK"],
+    "ETN": ["EMR", "HON", "ROK"],
+    "HON": ["EMR", "ETN", "GE"],
+    "GE": ["HON", "RTX", "EMR"],
+    "UNP": ["CSX", "NSC", "CP"],
+    "CSX": ["UNP", "NSC", "CP"],
+    "NSC": ["UNP", "CSX", "CP"],
+    "UPS": ["FDX", "XPO", "CHRW"],
+    "FDX": ["UPS", "XPO", "CHRW"],
+    "DHI": ["LEN", "PHM", "NVR"],
+    "LEN": ["DHI", "PHM", "NVR"],
+    "PHM": ["DHI", "LEN", "NVR"],
 }
 
 # SIC codes too broad to make a useful peer set from. Grouping by these would
@@ -171,14 +211,14 @@ def suggest(ticker: str, sic: str = "", same_sic: list[dict] | None = None) -> t
     tk = (ticker or "").strip().upper()
 
     if tk in CURATED:
-        return CURATED[tk], "Common comparisons for this company."
+        return CURATED[tk], ("curated", "Common comparisons for this company.")
 
     if same_sic and sic and sic not in TOO_BROAD:
         peers = [c["ticker"] for c in same_sic if c["ticker"].upper() != tk][:3]
         if peers:
-            return peers, "Filers sharing this company's SEC industry code."
+            return peers, ("sic", "Filers sharing this company's SEC industry code.")
 
     if sic in TOO_BROAD:
-        return [], ("This company's industry code covers businesses too different to compare "
-                    "automatically.")
-    return [], "No peer set is available for this company."
+        return [], ("broad", "This company's SEC industry code covers businesses too "
+                             "different to compare automatically.")
+    return [], ("none", "No comparison set has been checked for this company yet.")
