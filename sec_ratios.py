@@ -14,6 +14,7 @@ with filed figures.
 from __future__ import annotations
 
 import json
+import time
 import os
 import re
 from dataclasses import dataclass, field
@@ -229,16 +230,39 @@ class SecClient:
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-    def _get_json(self, url: str, cache_name: str) -> dict:
+    def _get_json(self, url: str, cache_name: str, max_age: int | None = None) -> dict:
+        """Fetch JSON, cached on disk.
+
+        `max_age` is seconds. Without it the cache never expires, which was a
+        real bug: a company that filed a new quarterly report kept showing the
+        previous quarter indefinitely, because the facts file on disk was
+        never refetched. Anything that changes when a company files needs an
+        age limit; the ticker list barely changes and does not.
+
+        A stale file is kept if the refetch fails, so a network problem
+        degrades to yesterday's data rather than to an error.
+        """
         cached = self.cache_dir / cache_name
         if cached.exists():
-            return json.loads(cached.read_text())
+            fresh = max_age is None or (time.time() - cached.stat().st_mtime) < max_age
+            if fresh:
+                try:
+                    return json.loads(cached.read_text())
+                except Exception:
+                    pass                       # corrupt file: refetch below
 
         import requests  # lazy so offline tests need no network deps
 
-        resp = requests.get(url, headers=self.headers, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = requests.get(url, headers=self.headers, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception:
+            # Serve the stale copy rather than failing outright.
+            if cached.exists():
+                return json.loads(cached.read_text())
+            raise
+
         cached.write_text(json.dumps(data))
         return data
 
@@ -337,8 +361,11 @@ class SecClient:
             raise LookupError(f"No SEC filer found for '{query}'")
         return matches[0]["cik"]
 
+    FACTS_MAX_AGE = 6 * 60 * 60
+
     def company_facts(self, cik: str) -> dict:
-        return self._get_json(FACTS_URL.format(cik=cik), f"facts_{cik}.json")
+        return self._get_json(FACTS_URL.format(cik=cik), f"facts_{cik}.json",
+                              max_age=self.FACTS_MAX_AGE)
 
     def company_profile(self, cik: str) -> dict:
         """Registration details, including the SEC's industry classification.
@@ -351,7 +378,8 @@ class SecClient:
         Never raises. A missing profile costs a caption, not the page.
         """
         try:
-            d = self._get_json(SUBMISSIONS_URL.format(cik=cik), f"sub_{cik}.json")
+            d = self._get_json(SUBMISSIONS_URL.format(cik=cik), f"sub_{cik}.json",
+                               max_age=self.FACTS_MAX_AGE)
         except Exception:
             return {}
         return {
