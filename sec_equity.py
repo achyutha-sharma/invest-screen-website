@@ -17,6 +17,10 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from sec_ratios import (
+    CURRENT_ASSETS,
+    CURRENT_LIABILITIES,
+    EQUITY,
+    INTEREST,
     DA,
     DEBT_COMPONENTS,
     DERIVED,
@@ -260,10 +264,14 @@ _ANNUAL_USD = [
     ("ocf", OPERATING_CASH, "duration"),
     ("capex", CAPEX, "duration"),
     ("buybacks", BUYBACKS, "duration"),
+    ("interest", INTEREST, "duration"),
 ]
 
 _ANNUAL_INSTANT = [
     ("cash", CASH),
+    ("equity", EQUITY),
+    ("current_assets", CURRENT_ASSETS),
+    ("current_liabilities", CURRENT_LIABILITIES),
 ]
 
 
