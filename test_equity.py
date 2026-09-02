@@ -1120,6 +1120,57 @@ def test_ranking():
     print("ranking ok")
 
 
+
+
+def test_period_ends_across_tags():
+    """Fiscal years must be collected from every tag, not the first one.
+
+    A filer that changes revenue tag mid-history used to lose every year filed
+    under the new tag: the three-year table stopped at the old tag's last
+    year while the page header still named the newer one, so the two
+    disagreed about which year was most recent.
+    """
+    old = [dur(f"{y}-01-01", f"{y}-12-31", v)
+           for y, v in [(2022, 282_800), (2023, 307_400)]]
+    new = [dur(f"{y}-01-01", f"{y}-12-31", v)
+           for y, v in [(2024, 350_000), (2025, 400_000)]]
+    ni = [dur(f"{y}-01-01", f"{y}-12-31", v)
+          for y, v in [(2022, 60_000), (2023, 73_800),
+                       (2024, 100_100), (2025, 118_000)]]
+
+    eq = extract_equity(build("TAG SWITCH CO", {
+        "Revenues": {"units": {"USD": old}},
+        "RevenueFromContractWithCustomerExcludingAssessedTax": {"units": {"USD": new}},
+        "NetIncomeLoss": {"units": {"USD": ni}},
+    }))
+
+    assert [p.label for p in eq.years] == ["FY2022", "FY2023", "FY2024", "FY2025"]
+    rev = eq.series("revenue")
+    assert len(rev) == 4, rev
+    assert rev[-1] == ("FY2025", 400_000.0), rev[-1]
+
+    # The header and the newest column must name the same year.
+    assert rev[-1][0] == eq.latest.label
+
+    # A year present only in net income still counts as a year.
+    only_ni = extract_equity(build("PARTIAL CO", {
+        "Revenues": {"units": {"USD": old}},
+        "NetIncomeLoss": {"units": {"USD": ni}},
+    }))
+    assert [p.label for p in only_ni.years][-1] == "FY2025"
+    assert only_ni.latest.get("revenue") is None, "no revenue filed for that year"
+
+    # A stray part-year must not become a separate fiscal year.
+    strays = list(old) + [dur("2023-07-01", "2023-12-31", 150_000)]
+    noisy = extract_equity(build("STRAY CO", {
+        "Revenues": {"units": {"USD": strays}},
+        "NetIncomeLoss": {"units": {"USD": ni[:2]}},
+    }))
+    labels = [p.label for p in noisy.years]
+    assert len(labels) == len(set(labels)), labels
+    print("period ends across tags ok")
+
+
 def main():
     test_clean()
     test_valuation()
@@ -1138,6 +1189,7 @@ def main():
     test_mda_dedupes_segments()
     test_cache_expiry()
     test_quarters_across_tags()
+    test_period_ends_across_tags()
     test_quarter_numbering()
     test_quarters_from_ytd()
     test_never_more_than_four_quarters()
