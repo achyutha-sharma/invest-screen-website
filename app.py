@@ -17,7 +17,6 @@ from datetime import date
 
 import expectations as expect
 from filing_text import latest_filings, read_filing
-import ranking
 from peers import suggest
 import funds as funds_data
 from prices import PriceClient
@@ -910,33 +909,6 @@ def return_shape(pct_expectations: float, dividend_yield: float) -> tuple[str, s
                       "either — the return has to come from the price.")
 
 
-def figures_for(tick: str, e, latest_p, quote_, hist) -> ranking.Figures:
-    """The inputs the weighted score needs, from figures already extracted."""
-    def ser(key):
-        return [p.get(key) for p in e.years if p.get(key) is not None]
-
-    ebit = latest_p.get("ebit")
-    ebitda = None if ebit is None else ebit + (latest_p.get("da") or 0)
-    fcf = [a - b for a, b in
-           zip([p.get("ocf") for p in e.years], [p.get("capex") for p in e.years])
-           if a is not None and b is not None]
-
-    return ranking.Figures(
-        ticker=tick, name=e.entity.split(",")[0].title(),
-        price=quote_.price if quote_ and quote_.available else None,
-        eps=latest_p.get("eps"), shares=latest_p.get("shares"),
-        revenue=ser("revenue"), net_income=ser("net_income"), fcf=fcf,
-        eps_series=ser("eps"),
-        ebit=ebit, ebitda=ebitda, ocf=latest_p.get("ocf"),
-        debt=latest_p.get("total_debt"), cash=latest_p.get("cash"),
-        equity=latest_p.get("equity"), interest=latest_p.get("interest"),
-        current_assets=latest_p.get("current_assets"),
-        current_liabilities=latest_p.get("current_liabilities"),
-        dps=latest_p.get("dps"), buybacks=latest_p.get("buybacks"),
-        prices=[v for _, v in hist])
-
-
-@st.cache_data(show_spinner=False, ttl=21_600)
 def company_bundle(tick: str):
     """Everything a peer lookup needs, fetched once and cached.
 
@@ -956,104 +928,6 @@ def company_bundle(tick: str):
         }
     except Exception:
         return None
-
-
-@st.cache_data(show_spinner=False, ttl=21_600)
-def peer_score(tick: str, cik_: str, sic: str):
-    """This company's weighted score, ranked against its peer set.
-
-    A score only means something relative to something else, so a single
-    company is measured against the same peers the comparison would use. With
-    no peer set there is nothing to rank against and no score is shown.
-    """
-    tickers, _ = suggest(tick, sic=sic)
-    if not tickers:
-        return None
-
-    figs = []
-    for t in [tick] + list(tickers):
-        b = company_bundle(t)
-        if not b:
-            continue
-        try:
-            figs.append(figures_for(b["ticker"], b["eq"], b["eq"].latest,
-                                    b["quote"], b["hist"]))
-        except Exception:
-            continue
-
-    if len(figs) < 2:
-        return None
-    try:
-        marks = {m.ticker: m for m in ranking.rank(figs)}
-    except Exception:
-        return None
-    return marks.get(tick.upper()) or marks.get(figs[0].ticker)
-
-
-def score_working(mark, name: str = "") -> str:
-    """The figures behind each component, as HTML.
-
-    A score with no working is an assertion. This shows every measure that
-    fed it: the company's own figure, where it placed among the companies
-    compared, and what the measure means.
-    """
-    blocks = ""
-    for key in ranking.WEIGHTS:
-        rows = mark.detail.get(key) or []
-        comp = mark.components.get(key)
-        usable = [r for r in rows if r["score"] is not None]
-
-        if comp is None:
-            head = ('<span class="cscore none">not scored</span>')
-            note = ("<p class='why'>None of these could be computed from the "
-                    "filings, so this component was left out and the others "
-                    "reweighted.</p>")
-        else:
-            band = "up" if comp >= 60 else "down" if comp < 40 else "mid"
-            head = f'<span class="cscore {band}">{comp:.0f}</span>'
-            best = max(usable, key=lambda r: r["score"])
-            worst = min(usable, key=lambda r: r["score"])
-            if len(usable) == 1:
-                note = (f"<p class='why'>One measure available, so the component "
-                        f"score is its score.</p>")
-            elif best["score"] == worst["score"]:
-                note = (f"<p class='why'>All {len(usable)} measures placed the same, "
-                        "so the component score is that placing.</p>")
-            else:
-                note = (f"<p class='why'>Strongest on <b>{E(best['label'].lower())}</b>, "
-                        f"weakest on <b>{E(worst['label'].lower())}</b>. The component "
-                        f"score is the average of {len(usable)}.</p>")
-
-        lines = ""
-        for r in rows:
-            if r["score"] is None:
-                lines += (f'<li><span class="ml">{E(r["label"])}</span>'
-                          '<span class="mv none">not filed</span>'
-                          f'<span class="mw">{E(r["what"])}</span></li>')
-            else:
-                # A shared figure is joint-placed. Everyone sharing it is not
-                # a placing at all, and saying "joint 1 of 4" beside a middling
-                # score would read as a contradiction.
-                shared = r.get("shared", 1)
-                if not r["place"]:
-                    place = "only one"
-                elif shared >= r["of"] > 1:
-                    place = f'all {r["of"]} the same'
-                elif shared > 1:
-                    place = f'joint {r["place"]} of {r["of"]}'
-                else:
-                    place = f'{r["place"]} of {r["of"]}' 
-                lines += (f'<li><span class="ml">{E(r["label"])}</span>'
-                          f'<span class="mv">{E(r["value"])}</span>'
-                          f'<span class="mr">{place} · scores '
-                          f'{r["score"]:.0f}</span>'
-                          f'<span class="mw">{E(r["what"])}</span></li>')
-
-        blocks += (f'<div class="cblock"><div class="chead">'
-                   f'<b>{E(ranking.LABELS[key])}</b>'
-                   f'<i>{ranking.WEIGHTS[key]}% of the score</i>{head}</div>'
-                   f"<ul class='mlist'>{lines}</ul>{note}</div>")
-    return f'<div class="working">{blocks}</div>'
 
 
 def pretty_period(iso: str) -> str:
@@ -2025,10 +1899,16 @@ if mode == "Compare":
                 # what analysts expected. Both are facts about what happened,
                 # which is a firmer basis for an ordering than an assumption
                 # about what will.
-                prseries = peq.series("revenue")
-                pgrowth = None
-                if len(prseries) >= 2 and prseries[-2][1]:
-                    pgrowth = 100 * (prseries[-1][1] / prseries[-2][1] - 1)
+                def _yoy(key):
+                    ser = peq.series(key)
+                    if len(ser) >= 2 and ser[-2][1]:
+                        # A swing out of a loss has no meaningful percentage.
+                        if ser[-2][1] > 0:
+                            return 100 * (ser[-1][1] / ser[-2][1] - 1)
+                    return None
+
+                pgrowth = _yoy("revenue")
+                peps_growth = _yoy("eps")
                 pnext = next_estimate(h["ticker"])
                 pl_all = peq.years
                 def _ser(key):
@@ -2042,22 +1922,7 @@ if mode == "Compare":
                             [p.get("capex") for p in pl_all])
                         if a is not None and b is not None]
 
-                figs = ranking.Figures(
-                    ticker=h["ticker"], name=peq.entity.split(",")[0].title(),
-                    cik=h["cik"], price=pprice, eps=peps, shares=pl.get("shares"),
-                    revenue=_ser("revenue"), net_income=_ser("net_income"),
-                    eps_series=_ser("eps"),
-                    fcf=pfcf, ebit=pl.get("ebit"), ebitda=pebitda,
-                    ocf=pl.get("ocf"), debt=pl.get("total_debt"),
-                    cash=pl.get("cash"), equity=pl.get("equity"),
-                    interest=pl.get("interest"),
-                    current_assets=pl.get("current_assets"),
-                    current_liabilities=pl.get("current_liabilities"),
-                    dps=pl.get("dps"), buybacks=pl.get("buybacks"),
-                    prices=[v for _, v in phist])
-
                 rows.append({
-                    "figs": figs,
                     "self": h["cik"] == cik,
                     "ticker": h["ticker"],
                     "cik": h["cik"],
@@ -2069,6 +1934,7 @@ if mode == "Compare":
                     "cagr": pcagr,
                     "years": (len(phist[-120:]) / 12) if phist else 0,
                     "growth": pgrowth,
+                    "eps_growth": peps_growth,
                     "next": pnext,
                 })
             except Exception:
@@ -2099,152 +1965,59 @@ if mode == "Compare":
                 "<b>Add another company above to compare against.</b></p></div>",
                 unsafe_allow_html=True)
         else:
-            try:
-                marks = {m.ticker: m for m in
-                         ranking.rank([r["figs"] for r in scored])}
-            except Exception:
-                marks = {}
-            for r in scored:
-                m = marks.get(r["ticker"])
-                r["score"] = m.total if m else None
-                r["parts"] = m.components if m else {}
+            # No composite score. A weighted rating implied a verdict the
+            # filings cannot support; the figures themselves are the point.
+            scored.sort(key=lambda r: (r["growth"] is not None, r["growth"] or 0),
+                        reverse=True)
 
-            # Ordered by the weighted score where it can be computed, and by
-            # reported sales growth otherwise.
-            scored.sort(key=lambda r: (r["score"] is not None, r["score"] or 0,
-                                       r["growth"] or 0), reverse=True)
-
-
-            # Short on purpose. The number is the least obvious thing on the
-            # page, so it needs one plain sentence and one worked figure --
-            # not a lesson.
             st.markdown(
-                '<div class="explain"><p><b>Ranked by how much sales actually grew last '
-                "year.</b> <b>Expected next quarter</b> is what analysts predict for "
-                "earnings per share in the quarter still to be reported — a forecast, "
-                "not a filed figure. <b>Score</b> is the weighted rating across seven "
-                "components, charted below.</p></div>", unsafe_allow_html=True)
+                '<div class="explain"><p>Last full year against the one before, '
+                "from the filings. <b>EPS growth</b> is profit per share, which is "
+                "what a shareholder owns — it can differ from sales growth when "
+                "costs move or the share count changes.</p></div>",
+                unsafe_allow_html=True)
 
             any_return = any(r["cagr"] is not None for r in scored)
-            any_next = any(r["next"] for r in scored)
-            any_score = any(r["score"] is not None for r in scored)
-            head = ("<tr><th>#</th><th>Company</th>"
-                    + ("<th>Score</th>" if any_score else "")
-                    + "<th>Sales growth</th>"
+            head = ("<tr><th>Company</th><th>Sales growth</th><th>EPS growth</th>"
                     + ("<th>Price return a year</th>" if any_return else "")
-                    + ("<th>Expected next quarter</th>" if any_next else "")
                     + "<th>P/E</th></tr>")
+
+            def pct_cell(v):
+                if v is None:
+                    return '<span class="ret none">—</span>'
+                return (f'<span class="ret {"up" if v >= 0 else "down"}">'
+                        f"{v:+,.1f}%</span>")
+
             body = ""
-            for rank, r in enumerate(scored, start=1):
-                if r["score"] is None:
-                    mark = '<span class="ret none">—</span>'
-                else:
-                    band = ("up" if r["score"] >= 60 else
-                            "down" if r["score"] < 40 else "mid")
-                    mark = f'<span class="mark {band}">{r["score"]:.0f}</span>'
-
-                if r["growth"] is None:
-                    grow = '<span class="ret none">—</span>'
-                else:
-                    up = r["growth"] >= 0
-                    grow = (f'<span class="ret {"up" if up else "down"}">'
-                            f'{r["growth"]:+,.1f}%</span>')
-
-                if r["next"]:
-                    nq = r["next"]
-                    nxt = (f'<span class="est">{D}{nq["estimate"]:,.2f}'
-                           f'<i>to {E(pretty_period(nq["period"]))}</i></span>')
-                else:
-                    nxt = '<span class="ret none">—</span>'
-
-                # Green above the market's long-run average, red below. The
-                # comparison is against the index because that is the
-                # alternative -- owning all 500 instead of this one.
+            for r in scored:
                 if r["cagr"] is None:
-                    ret = '<span class="ret none">no history</span>'
+                    ret = '<span class="ret none">—</span>'
                 else:
                     fast = r["cagr"] >= MARKET_LONG_RUN
                     ret = (f'<span class="ret {"up" if fast else "down"}">'
                            f'{r["cagr"]:+,.1f}%</span>')
                 body += (
                     f'<tr class="{"self" if r["self"] else ""}">'
-                    f'<td class="rank">{rank}</td>'
                     f'<td>{E(r["name"])}'
                     + (f'<span class="mini {"up" if r["day"] >= 0 else "down"}">'
                        f'{"▲" if r["day"] >= 0 else "▼"}{abs(r["day"]):.2f}%</span>'
                        if r["day"] is not None else "")
                     + "</td>"
-                    + (f"<td>{mark}</td>" if any_score else "")
-                    + f"<td>{grow}</td>"
+                    + f'<td>{pct_cell(r["growth"])}</td>'
+                    + f'<td>{pct_cell(r["eps_growth"])}</td>'
                     + (f"<td>{ret}</td>" if any_return else "")
-                    + (f"<td>{nxt}</td>" if any_next else "")
                     + f'<td>{r["pe"]:,.1f}×</td>'
                     + "</tr>")
             st.markdown(f'<div class="panel"><table class="comp cmp">'
                         f"<thead>{head}</thead><tbody>{body}</tbody></table></div>",
                         unsafe_allow_html=True)
 
-            top = scored[0]
-            note = ""
-            if top["growth"] is not None:
-                note = (f'<b>{E(top["name"])}</b> grew sales fastest last year, at '
-                        f'<b>{top["growth"]:+,.1f}%</b>. ')
-            st.markdown(
-                f'<div class="readout"><p>{note}<b>Growing fastest is not the same as '
-                "being the better buy.</b> A company already expected to grow has to "
-                "keep delivering; a slower one may need very little to go right. "
-                "Estimates are analysts' opinions, not filings — and companies guide "
-                "them toward a number they are confident of clearing.</p></div>",
-                unsafe_allow_html=True)
-
-
-            # Component scores as a table. A chart shows the shape of a
-            # company's strengths; the numbers let a reader check them.
-            charted = [r for r in scored if r["parts"]]
-            if charted:
-                keys = list(ranking.WEIGHTS)
-                hdr = "".join(
-                    f'<th>{E(ranking.LABELS[k])}<i>{ranking.WEIGHTS[k]}%</i></th>'
-                    for k in keys)
-                brows = ""
-                for r in charted:
-                    cells = ""
-                    for k in keys:
-                        v = r["parts"].get(k)
-                        if v is None:
-                            cells += '<td><span class="ret none">—</span></td>'
-                        else:
-                            band = ("up" if v >= 60 else
-                                    "down" if v < 40 else "none")
-                            cells += (f'<td><span class="ret {band}">{v:.0f}</span>'
-                                      "</td>")
-                    total = ("—" if r["score"] is None else f'{r["score"]:.0f}')
-                    brows += (f'<tr><td>{E(r["name"])}</td>{cells}'
-                              f'<td class="tot">{total}</td></tr>')
-                st.markdown(
-                    '<div class="panel" style="overflow-x:auto">'
-                    '<table class="comp wtable parts">'
-                    f"<thead><tr><th>Company</th>{hdr}<th>Score</th></tr></thead>"
-                    f"<tbody>{brows}</tbody></table></div>", unsafe_allow_html=True)
-                st.caption("Each component scored 0-100 against the others shown, then "
-                           "weighted by the percentage in the header. A dash means the "
-                           "filings did not contain enough to score it, and the "
-                           "remaining components were reweighted.")
-
-            worked = [r for r in scored if marks.get(r["ticker"])]
-            if worked:
-                with st.expander("How these scores were worked out"):
-                    pick = st.radio(
-                        "Company", [r["name"] for r in worked],
-                        horizontal=True, key=f"work_{cik}",
-                        label_visibility="collapsed")
-                    chosen = next((r for r in worked if r["name"] == pick), worked[0])
-                    st.markdown(score_working(marks[chosen["ticker"]], chosen["name"]),
-                                unsafe_allow_html=True)
-                    st.caption("Every figure comes from the company's filings; share "
-                               "price and price history come from a market feed. A "
-                               "placing is against the other companies in this "
-                               "comparison only.")
+            st.caption(
+                why_peers
+                + f" Price return is annualised over the years shown and is green above "
+                f"{MARKET_LONG_RUN:.0f}% a year, roughly the S&P 500's long-run average; "
+                "it excludes dividends. Growth figures come from filings; a company with "
+                "fewer than two filed years shows a dash.")
 
             others = [r for r in scored if not r["self"]]
             if others:
@@ -2658,47 +2431,6 @@ if eps and eps > 0:
 # --------------------------------------------------------------------------
 # 10 filings
 # --------------------------------------------------------------------------
-
-fl = filings(cik)
-if fl:
-    sh("Recent filings", "newest first")
-    kinds = {"10-K": ("k", "Annual report"), "10-Q": ("q", "Quarterly report"),
-             "8-K": ("e", "Current report")}
-    items = ""
-    for f in fl:
-        cls, what = kinds.get(f["form"][:4], ("o", "Filing"))
-        desc = f.get("desc") or what
-        items += (f'<li><span class="ftype {cls}">{E(f["form"])}</span>'
-                  f'<span class="fmain"><a href="{E(f["url"])}" target="_blank" '
-                  f'rel="noopener">{E(desc)}</a></span>'
-                  f'<span class="fwhen">{E(f["filed"])}</span></li>')
-    st.markdown(f'<div class="panel"><ul class="feed">{items}</ul></div>',
-                unsafe_allow_html=True)
-
-# --------------------------------------------------------------------------
-# 08 the scorecard
-# --------------------------------------------------------------------------
-
-mine = peer_score(ticker, cik, str(prof.get("sic") or ""))
-if mine and mine.total is not None:
-    sh("Score against its peers", "same measures as the comparison")
-
-    band = ("up" if mine.total >= 60 else "down" if mine.total < 40 else "mid")
-    st.markdown(
-        f'<div class="bigscore"><span class="mark {band}">{mine.total:.0f}</span>'
-        '<span class="outof">out of 100</span>'
-        "<p>Ranked against the companies it is usually compared with, across "
-        "seven measures weighted below. A score only means something relative to "
-        "something else, so this is a placing among peers — not a verdict.</p>"
-        "</div>", unsafe_allow_html=True)
-
-    with st.expander("How this score was worked out", expanded=False):
-        st.markdown(score_working(mine), unsafe_allow_html=True)
-    st.caption(
-        "Each component is scored 0-100 against the peer set, then weighted. "
-        "**Price stability** measures the share, not the business — a steady price "
-        "is not the same as a sound company. A measure the filings do not contain "
-        "is skipped rather than counted against the company.")
 
 sh("The scorecard", "what the filings answer")
 dots = ""
