@@ -718,6 +718,13 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 .horizon p.note{color:var(--text-3);border-top:1px solid var(--line);padding-top:.6rem}
 .horizon b{color:#FFFFFF;font-weight:700}
 
+
+.horiz{font-family:var(--mono);font-size:.66rem;font-weight:700;padding:.16rem .42rem;
+  border-radius:11px;white-space:nowrap}
+.horiz.far{background:rgba(240,196,106,.14);color:var(--warn)}
+.horiz.mid{background:rgba(169,139,255,.14);color:var(--acc)}
+.horiz.near{background:rgba(95,214,155,.13);color:var(--up)}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -929,6 +936,15 @@ def facts(cik: str):
 @st.cache_data(show_spinner=False)
 def profile(cik: str):
     return client.company_profile(cik)
+
+
+@st.cache_data(show_spinner=False, ttl=21_600)
+def surprises(ticker: str):
+    """What analysts expected against what was reported. Best-effort."""
+    try:
+        return prices.surprises(ticker)
+    except Exception:
+        return []
 
 
 @st.cache_data(show_spinner=False, ttl=600)
@@ -1682,31 +1698,32 @@ if mode == "Compare":
                        "least two companies.")
         else:
             scored.sort(key=lambda r: r["pct"], reverse=True)
-            st.markdown(
-                '<p class="lead">Ordered by <b>how much of each share price rests on '
-                "profits not yet earned</b>.</p>", unsafe_allow_html=True)
+
 
             # Short on purpose. The number is the least obvious thing on the
             # page, so it needs one plain sentence and one worked figure --
             # not a lesson.
             st.markdown(
-                '<div class="explain"><p><b>P/E is what you pay for each dollar the '
-                "company earns.</b> A business expected to stay the same size trades "
-                "around 10. Anything higher is people paying extra because they expect "
-                "it to earn more later.</p>"
-                "<p>That extra is the <b>“paying for future growth”</b> column. At 75%, "
-                "three quarters of the share price is buying profits that do not exist "
-                "yet — <b>the company has to actually deliver them, or the price "
-                "falls.</b></p></div>",
-                unsafe_allow_html=True)
+                '<div class="explain"><p><b>Paying for future growth</b> is the share '
+                "of the price buying profits the company has not earned yet. At 80%, "
+                "only 20 cents of every dollar is backed by profit already "
+                "reported.</p></div>", unsafe_allow_html=True)
 
             any_return = any(r["cagr"] is not None for r in scored)
             head = ("<tr><th>#</th><th>Company</th><th>Paying for future growth</th>"
+                    "<th>Time to prove it</th>"
                     + ("<th>Price return a year</th>" if any_return else "")
                     + "<th>P/E</th></tr>")
             body = ""
             for rank, r in enumerate(scored, start=1):
                 bar = (f'<span class="pbar"><i style="width:{r["pct"]:.0f}%"></i></span>')
+
+                # How long the growth in the price has to take to arrive. A
+                # description of the share, not a holding period for the reader.
+                hz = (("far", "years") if r["pct"] >= 60 else
+                      ("mid", "a few years") if r["pct"] >= 30 else
+                      ("near", "priced on today"))
+
                 # Green above the market's long-run average, red below. The
                 # comparison is against the index because that is the
                 # alternative -- owning all 500 instead of this one.
@@ -1724,6 +1741,7 @@ if mode == "Compare":
                        f'{"▲" if r["day"] >= 0 else "▼"}{abs(r["day"]):.2f}%</span>'
                        if r["day"] is not None else "")
                     + f'</td><td>{r["pct"]:.0f}% {bar}</td>'
+                    + f'<td><span class="horiz {hz[0]}">{hz[1]}</span></td>'
                     + (f"<td>{ret}</td>" if any_return else "")
                     + f'<td>{r["pe"]:,.1f}×</td>'
                     + "</tr>")
@@ -1732,42 +1750,12 @@ if mode == "Compare":
                         unsafe_allow_html=True)
 
             top, bottom = scored[0], scored[-1]
-
-
-            top, bottom = scored[0], scored[-1]
             st.markdown(
-                '<div class="panel horizon"><h4>What the ordering means</h4>'
-                f'<p><b>Top of the list — {E(top["name"])} at {top["pct"]:.0f}%.</b> '
-                "Most of what you pay is for profits still to come. The company has "
-                "years of growth to deliver before the price makes sense on its own "
-                "numbers. Good results push it higher; an ordinary quarter can knock it "
-                "down hard, because ordinary was not what was priced in.</p>"
-                f'<p><b>Bottom of the list — {E(bottom["name"])} at {bottom["pct"]:.0f}%.</b> '
-                "More of the price is backed by profit already reported. Less has to go "
-                "right, and less can go wrong — but there is also less to gain if it "
-                "does well, because less growth was being paid for.</p>"
-                "<p class=\'note\'>Neither is better. The number says what has been "
-                "assumed, not whether the assumption is right.</p></div>",
+                f'<div class="readout"><p><b>{E(top["name"])}</b> has the most to prove '
+                f'at <b>{top["pct"]:.0f}%</b>; <b>{E(bottom["name"])}</b> the least at '
+                f'<b>{bottom["pct"]:.0f}%</b>. Neither is better — the number says what '
+                "has been assumed, not whether it is right.</p></div>",
                 unsafe_allow_html=True)
-
-            with st.expander("How this connects to how long you hold something"):
-                st.markdown(
-                    "**A share high on this list needs time.** The growth it is priced "
-                    "for takes years to arrive, and the price can fall a long way while "
-                    "you wait — even in years when the business does fine.\n\n"
-                    "**A share low on the list has less to prove**, so it tends to move "
-                    "less in either direction. That is steadier, not safer: a cheap "
-                    "share can stay cheap for years, or be cheap because profits are "
-                    "shrinking.\n\n"
-                    "**What most people actually do.** The majority of money invested "
-                    "for retirement is not in individual shares at all — it sits in "
-                    "index funds, held for decades, precisely because picking which "
-                    "companies will deliver is hard. Studies of individual investors "
-                    "consistently find that those who trade more often end up with less "
-                    "than those who trade rarely.\n\n"
-                    "That is context, not a recommendation. **How long you can leave "
-                    "money alone depends on your situation, and no filing can tell you "
-                    "that.**")
 
             others = [r for r in scored if not r["self"]]
             if others:
@@ -2216,6 +2204,54 @@ st.markdown(f'''<div class="panel">
     advice to buy or sell. A high score at the wrong price still loses money, and a low score
     can rise for years. It scores what the company has already reported — the future is not in
     the filings.</div></div>''', unsafe_allow_html=True)
+
+# --------------------------------------------------------------------------
+# Expected against reported
+# --------------------------------------------------------------------------
+# The only numbers on this page that are not from a filing. Analyst estimates
+# are opinions, and companies manage them -- a lowered bar is easier to clear
+# -- so the section says where they came from and what a run of beats does and
+# does not mean.
+
+surp = surprises(ticker)
+if surp:
+    sh("Expected against reported", "analyst estimates, not filings")
+    rows = ""
+    beats = 0
+    for r in surp:
+        beat = r["actual"] >= r["estimate"]
+        beats += 1 if beat else 0
+        gap = r["surprise_pct"]
+        rows += (
+            f'<tr><td>Q{r["quarter"]} {r["year"]}</td>'
+            f'<td>{D}{r["estimate"]:,.2f}</td>'
+            f'<td>{D}{r["actual"]:,.2f}</td>'
+            f'<td class="{"good" if beat else "weak"}">'
+            + (f'{"▲" if beat else "▼"} {abs(gap):,.1f}%' if gap is not None else "—")
+            + "</td></tr>")
+
+    st.markdown(
+        '<div class="panel"><table class="comp"><thead><tr><th>Quarter</th>'
+        "<th>Expected</th><th>Reported</th><th>Difference</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table></div>", unsafe_allow_html=True)
+
+    n = len(surp)
+    if beats == n:
+        verdict = (f"Beat expectations in all {n} of the last {n} quarters.")
+    elif beats == 0:
+        verdict = (f"Missed expectations in all {n} of the last {n} quarters.")
+    else:
+        verdict = (f"Beat expectations in {beats} of the last {n} quarters.")
+
+    st.markdown(f'<div class="readout"><p>{verdict}</p>'
+                "<p><b>A run of beats is not as impressive as it sounds.</b> Companies "
+                "guide analysts toward a number they are confident of clearing, so most "
+                "large companies beat most quarters. <b>What matters more is the "
+                "direction of the estimates themselves</b> — a company beating a bar "
+                "that keeps being lowered is not growing.</p></div>",
+                unsafe_allow_html=True)
+    st.caption("Estimates come from a market data feed, not from SEC filings — they are "
+               "what analysts predicted, not something the company reported.")
 
 # --------------------------------------------------------------------------
 # Notes and footer
