@@ -1,356 +1,303 @@
 """
-A weighted score for ranking companies against each other.
+Who to compare a company against.
 
-Six components, each built from several measures, weighted as an analyst
-would weight them. Every measure is scored 0-100 against the other companies
-in the same comparison rather than against a fixed threshold, because what
-counts as a good margin or a normal multiple differs completely between
-industries -- and a peer set is the only fair benchmark this tool has.
+Deciding who counts as a peer is a judgement, and the SEC does not publish a
+"companies like this one" endpoint. Two sources are used, in order:
 
-Three rules hold throughout:
+  1. The SEC's own industry classification. Every filer carries a SIC code, so
+     two companies sharing one are in the same line of business by the
+     government's own reckoning.
+  2. A small hand-checked map for the largest and most-searched companies,
+     because SIC codes are coarse -- Netflix and a cable operator share one,
+     and nobody would call them peers.
 
-  * A measure that cannot be computed is skipped, and the weights of the
-    components that survive are renormalised. A company is never penalised for
-    a figure its filings do not contain.
-  * A component needs at least one usable measure or it drops out entirely.
-  * A company with too little to score gets no score at all, rather than a
-    misleading one built from two measures out of fourteen.
-
-The output is an ordering of the evidence already filed. It is not a forecast,
-and a high score at the wrong price still loses money.
+Where neither applies the caller is told plainly, and the reader can type
+tickers instead. A wrong peer set is worse than none: it makes a company look
+cheap or expensive against businesses it has nothing in common with.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+# Hand-checked peer sets, keyed by ticker. Kept deliberately short: these are
+# the comparisons a person would actually make, not everything in the sector.
+CURATED: dict[str, list[str]] = {
+    # Retail
+    "HD": ["LOW", "TGT", "WMT"],
+    "LOW": ["HD", "TGT", "WMT"],
+    "TGT": ["WMT", "COST", "HD"],
+    "WMT": ["TGT", "COST", "KR"],
+    "COST": ["WMT", "TGT", "KR"],
+    "KR": ["ACI", "WMT", "COST"],
+    "ACI": ["KR", "WMT", "COST"],
+    # Apparel and footwear. Peers are checked for still filing -- a company
+    # taken private stops filing and can never resolve, so it would silently
+    # shorten every comparison it appears in.
+    "NKE": ["LULU", "UAA", "DECK"],
+    "LULU": ["NKE", "DECK", "UAA"],
+        "UAA": ["NKE", "LULU", "DECK"],
+    # Restaurants
+    "SBUX": ["MCD", "CMG", "YUM"],
+    "MCD": ["SBUX", "YUM", "CMG"],
+    "CMG": ["MCD", "SBUX", "YUM"],
+    "YUM": ["MCD", "CMG", "SBUX"],
+    # Media and streaming
+    "NFLX": ["DIS", "WBD", "PARA"],
+    "DIS": ["NFLX", "WBD", "PARA"],
+    # Technology
+    "AAPL": ["MSFT", "GOOGL", "DELL"],
+    "MSFT": ["AAPL", "GOOGL", "ORCL"],
+    "GOOGL": ["MSFT", "META", "AMZN"],
+    "META": ["GOOGL", "SNAP", "PINS"],
+    "AMZN": ["WMT", "GOOGL", "EBAY"],
+    "ORCL": ["MSFT", "CRM", "SAP"],
+    "CRM": ["ORCL", "MSFT", "NOW"],
+    "NVDA": ["AMD", "INTC", "AVGO"],
+    "AMD": ["NVDA", "INTC", "AVGO"],
+    "INTC": ["AMD", "NVDA", "TXN"],
+    # Banks
+    "JPM": ["BAC", "C", "WFC"],
+    "BAC": ["JPM", "C", "WFC"],
+    "WFC": ["JPM", "BAC", "C"],
+    "C": ["JPM", "BAC", "WFC"],
+    "GS": ["MS", "JPM", "SCHW"],
+    "MS": ["GS", "JPM", "SCHW"],
+    # Payments
+    "V": ["MA", "AXP", "PYPL"],
+    "MA": ["V", "AXP", "PYPL"],
+    "PYPL": ["V", "MA", "AXP"],
+    # Airlines
+    "DAL": ["UAL", "AAL", "LUV"],
+    "UAL": ["DAL", "AAL", "LUV"],
+    "AAL": ["DAL", "UAL", "LUV"],
+    "LUV": ["DAL", "UAL", "AAL"],
+    # Autos
+    "F": ["GM", "TSLA", "STLA"],
+    "GM": ["F", "TSLA", "STLA"],
+    "TSLA": ["GM", "F", "LCID"],
+    # Beverages and staples
+    "KO": ["PEP", "MNST", "KDP"],
+    "PEP": ["KO", "MNST", "KDP"],
+    "PG": ["CL", "KMB", "UL"],
+    # Pharma
+    "PFE": ["MRK", "JNJ", "BMY"],
+    "MRK": ["PFE", "JNJ", "LLY"],
+    "JNJ": ["PFE", "MRK", "ABBV"],
+    # Telecom
+    "T": ["VZ", "TMUS"],
+    "VZ": ["T", "TMUS"],
+    "TMUS": ["VZ", "T"],
 
-# What each component contributes. These are judgement calls, and they are
-# stated openly on the page so a reader can disagree with them.
-WEIGHTS = {
-    "valuation": 22,
-    "growth": 18,
-    "profitability": 18,
-    "strength": 14,
-    "quality": 9,
-    "returns": 9,
-    "stability": 10,
+    # Specialty and beauty retail. These share SIC 5990 with almost every
+    # unclassified shop in America, so the code alone is useless here -- the
+    # peer set has to be named.
+    "ULTA": ["EL", "COTY", "BBWI"],
+    "EL": ["ULTA", "COTY", "PG"],
+    "COTY": ["EL", "ULTA", "PG"],
+    "BBWI": ["ULTA", "EL", "GPS"],
+    "GPS": ["ANF", "URBN", "AEO"],
+    "ANF": ["GPS", "URBN", "AEO"],
+    "URBN": ["ANF", "GPS", "AEO"],
+    "AEO": ["ANF", "GPS", "URBN"],
+    "ROST": ["TJX", "BURL", "TGT"],
+    "TJX": ["ROST", "BURL", "TGT"],
+    "BURL": ["ROST", "TJX", "TGT"],
+    "DG": ["DLTR", "WMT", "TGT"],
+    "DLTR": ["DG", "WMT", "TGT"],
+    "BBY": ["TGT", "WMT", "AMZN"],
+    "DECK": ["NKE", "LULU", "UAA"],
+    "CROX": ["NKE", "DECK", "UAA"],
+    "ONON": ["NKE", "DECK", "LULU"],
+
+    # Restaurants and consumer brands.
+    "DPZ": ["CMG", "YUM", "MCD"],
+    "WEN": ["MCD", "YUM", "DPZ"],
+    "QSR": ["MCD", "YUM", "WEN"],
+    "MNST": ["KO", "PEP", "CELH"],
+    "CELH": ["MNST", "KO", "PEP"],
+    "KHC": ["GIS", "K", "PEP"],
+    "GIS": ["KHC", "K", "PEP"],
+    "K": ["GIS", "KHC", "PEP"],
+    "CL": ["PG", "KMB", "CHD"],
+    "KMB": ["PG", "CL", "CHD"],
+
+    # Technology and software.
+    "ADBE": ["CRM", "MSFT", "ORCL"],
+    "NOW": ["CRM", "ADBE", "MSFT"],
+    "SHOP": ["AMZN", "SQ", "PYPL"],
+    "UBER": ["LYFT", "DASH", "ABNB"],
+    "LYFT": ["UBER", "DASH", "ABNB"],
+    "DASH": ["UBER", "ABNB", "LYFT"],
+    "ABNB": ["UBER", "DASH", "MAR"],
+    "QCOM": ["NVDA", "AMD", "AVGO"],
+    "AVGO": ["NVDA", "QCOM", "AMD"],
+    "MU": ["NVDA", "AMD", "INTC"],
+    "TXN": ["AVGO", "QCOM", "INTC"],
+
+    # Health care and pharmacy.
+    "LLY": ["PFE", "MRK", "ABBV"],
+    "ABBV": ["PFE", "MRK", "LLY"],
+    "BMY": ["PFE", "MRK", "ABBV"],
+    "AMGN": ["ABBV", "MRK", "LLY"],
+    "MRNA": ["PFE", "BNTX", "MRK"],
+    "CVS": ["WBA", "UNH", "CI"],
+    "UNH": ["CVS", "CI", "ELV"],
+    "HOOD": ["SCHW", "COIN", "IBKR"],
+    "COIN": ["HOOD", "SCHW", "IBKR"],
+    "SCHW": ["HOOD", "IBKR", "MS"],
+
+    # Industrials and energy.
+    "CAT": ["DE", "CMI", "HON"],
+    "DE": ["CAT", "CMI", "AGCO"],
+    "BA": ["LMT", "RTX", "GD"],
+    "LMT": ["BA", "RTX", "GD"],
+    "RTX": ["LMT", "BA", "GD"],
+    "CVX": ["XOM", "COP", "OXY"],
+    "COP": ["XOM", "CVX", "OXY"],
+    "NEE": ["DUK", "SO", "AEP"],
+    "DUK": ["NEE", "SO", "AEP"],
+
+    # Metals, materials and industrials. Narrow SIC codes, but narrow is not
+    # the same as covered -- these needed naming like everything else.
+    "KALU": ["CENX", "AA", "ATI"],
+    "AA": ["CENX", "KALU", "ATI"],
+    "CENX": ["AA", "KALU", "ATI"],
+    "ATI": ["CRS", "KALU", "AA"],
+    "CRS": ["ATI", "KALU", "AA"],
+    "X": ["NUE", "STLD", "CLF"],
+    "NUE": ["STLD", "X", "CLF"],
+    "STLD": ["NUE", "X", "CLF"],
+    "CLF": ["X", "NUE", "STLD"],
+    "FCX": ["SCCO", "TECK", "AA"],
+    "SCCO": ["FCX", "TECK", "AA"],
+    "NEM": ["GOLD", "AEM", "FCX"],
+    "GOLD": ["NEM", "AEM", "FCX"],
+    "DOW": ["LYB", "DD", "EMN"],
+    "LYB": ["DOW", "DD", "EMN"],
+    "DD": ["DOW", "LYB", "EMN"],
+    "SHW": ["PPG", "RPM", "DD"],
+    "PPG": ["SHW", "RPM", "DD"],
+    "VMC": ["MLM", "SUM", "EXP"],
+    "MLM": ["VMC", "SUM", "EXP"],
+
+    # Machinery, transport and building.
+    "CMI": ["CAT", "DE", "PCAR"],
+    "PCAR": ["CMI", "CAT", "DE"],
+    "EMR": ["HON", "ETN", "ROK"],
+    "ETN": ["EMR", "HON", "ROK"],
+    "HON": ["EMR", "ETN", "GE"],
+    "GE": ["HON", "RTX", "EMR"],
+    "UNP": ["CSX", "NSC", "CP"],
+    "CSX": ["UNP", "NSC", "CP"],
+    "NSC": ["UNP", "CSX", "CP"],
+    "UPS": ["FDX", "XPO", "CHRW"],
+    "FDX": ["UPS", "XPO", "CHRW"],
+    "DHI": ["LEN", "PHM", "NVR"],
+    "LEN": ["DHI", "PHM", "NVR"],
+    "PHM": ["DHI", "LEN", "NVR"],
+
+    # Medical devices, insurers and health services.
+    "SYK": ["BSX", "ZBH", "MDT"],
+    "BSX": ["SYK", "MDT", "ABT"],
+    "MDT": ["SYK", "BSX", "ABT"],
+    "ZBH": ["SYK", "BSX", "MDT"],
+    "ABT": ["MDT", "BSX", "BDX"],
+    "BDX": ["ABT", "MDT", "SYK"],
+    "ISRG": ["SYK", "BSX", "MDT"],
+    "EW": ["BSX", "MDT", "ABT"],
+    "DXCM": ["PODD", "ISRG", "ABT"],
+    "PODD": ["DXCM", "ISRG", "ABT"],
+    "TMO": ["DHR", "A", "WAT"],
+    "DHR": ["TMO", "A", "WAT"],
+    "CI": ["UNH", "ELV", "CVS"],
+    "ELV": ["UNH", "CI", "CVS"],
+    "HUM": ["UNH", "ELV", "CI"],
+    "HCA": ["THC", "UHS", "CYH"],
+    "ZTS": ["IDXX", "ELAN", "MRK"],
+
+    # Insurance and financials beyond the big banks.
+    "PGR": ["ALL", "TRV", "CB"],
+    "ALL": ["PGR", "TRV", "CB"],
+    "TRV": ["ALL", "PGR", "CB"],
+    "CB": ["TRV", "ALL", "AIG"],
+    "AIG": ["CB", "MET", "PRU"],
+    "MET": ["PRU", "AIG", "AFL"],
+    "PRU": ["MET", "AIG", "AFL"],
+    "AXP": ["V", "MA", "COF"],
+    "COF": ["AXP", "DFS", "SYF"],
+    "BLK": ["BX", "KKR", "TROW"],
+    "BX": ["KKR", "APO", "BLK"],
+    "KKR": ["BX", "APO", "CG"],
+    "SPGI": ["MCO", "MSCI", "ICE"],
+    "MCO": ["SPGI", "MSCI", "ICE"],
+    "ICE": ["CME", "NDAQ", "SPGI"],
+    "CME": ["ICE", "NDAQ", "CBOE"],
+
+    # Media, travel and leisure.
+    "CMCSA": ["CHTR", "DIS", "WBD"],
+    "CHTR": ["CMCSA", "WBD", "DIS"],
+    "WBD": ["DIS", "PARA", "NFLX"],
+    "PARA": ["WBD", "DIS", "NFLX"],
+    "MAR": ["HLT", "H", "IHG"],
+    "HLT": ["MAR", "H", "IHG"],
+    "BKNG": ["EXPE", "ABNB", "TRIP"],
+    "EXPE": ["BKNG", "ABNB", "TRIP"],
+    "RCL": ["CCL", "NCLH", "MAR"],
+    "CCL": ["RCL", "NCLH", "MAR"],
+    "NCLH": ["RCL", "CCL", "MAR"],
+    "LVS": ["MGM", "WYNN", "CZR"],
+    "MGM": ["LVS", "WYNN", "CZR"],
+    "DKNG": ["FLUT", "MGM", "CZR"],
+
+    # Property, utilities and telecoms.
+    "AMT": ["CCI", "SBAC", "EQIX"],
+    "CCI": ["AMT", "SBAC", "EQIX"],
+    "EQIX": ["DLR", "AMT", "CCI"],
+    "DLR": ["EQIX", "AMT", "CCI"],
+    "PLD": ["EXR", "PSA", "AMT"],
+    "PSA": ["EXR", "PLD", "CUBE"],
+    "O": ["NNN", "SPG", "VICI"],
+    "SPG": ["O", "KIM", "REG"],
+    "SO": ["DUK", "NEE", "AEP"],
+    "AEP": ["SO", "DUK", "NEE"],
+    "D": ["SO", "DUK", "EXC"],
+    "EXC": ["D", "SO", "AEP"],
+
+    # Software and services not yet covered.
+    "INTU": ["ADBE", "CRM", "NOW"],
+    "WDAY": ["NOW", "CRM", "ADBE"],
+    "SNOW": ["MDB", "DDOG", "NOW"],
+    "DDOG": ["SNOW", "MDB", "NOW"],
+    "MDB": ["SNOW", "DDOG", "ORCL"],
+    "PANW": ["CRWD", "FTNT", "ZS"],
+    "CRWD": ["PANW", "FTNT", "ZS"],
+    "FTNT": ["PANW", "CRWD", "ZS"],
+    "IBM": ["ACN", "ORCL", "MSFT"],
+    "ACN": ["IBM", "INFY", "CTSH"],
+    "TXT": ["GD", "LMT", "RTX"],
 }
 
-LABELS = {
-    "valuation": "Valuation",
-    "growth": "Growth",
-    "profitability": "Profitability",
-    "strength": "Financial strength",
-    "quality": "Earnings quality",
-    "returns": "Shareholder returns",
-    "stability": "Price stability",
-}
-
-MEASURES = {
-    "valuation": "P/E, EV/EBITDA, free-cash-flow yield",
-    "growth": "3-year revenue, EPS and free-cash-flow growth",
-    "profitability": "return on capital, operating margin, net margin",
-    "strength": "net debt/EBITDA, interest coverage, current ratio",
-    "quality": "cash flow against reported profit, margin stability",
-    "returns": "dividend yield, dividend cover, buybacks",
-    "stability": "volatility of monthly returns, worst fall from a peak",
-}
-
-# Minimum share of the total weight that must be scoreable for a company to
-# get a score at all.
-MIN_COVERAGE = 0.55
+# SIC codes too broad to make a useful peer set from. Grouping by these would
+# put a streaming service beside a cable operator, or a fintech beside a bank.
+TOO_BROAD = {"6199", "7372", "4813", "6770", "2834", "3674"}
 
 
-@dataclass
-class Figures:
-    """One company's inputs, already extracted. None means not filed."""
-    ticker: str
-    name: str
-    cik: str = ""
-    price: float | None = None
-    eps: float | None = None
-    shares: float | None = None
-    revenue: list[float] = field(default_factory=list)     # oldest first
-    net_income: list[float] = field(default_factory=list)
-    fcf: list[float] = field(default_factory=list)
-    ebit: float | None = None
-    ebitda: float | None = None
-    ocf: float | None = None
-    debt: float | None = None
-    cash: float | None = None
-    equity: float | None = None
-    interest: float | None = None
-    current_assets: float | None = None
-    current_liabilities: float | None = None
-    dps: float | None = None
-    buybacks: float | None = None
-    # Month-end closes, oldest first. Price, not business -- kept separate in
-    # its own component and labelled as such, because a steady share price is
-    # not the same thing as a sound company.
-    prices: list[float] = field(default_factory=list)
+def suggest(ticker: str, sic: str = "", same_sic: list[dict] | None = None) -> tuple[list[str], str]:
+    """Peer tickers and a note on where they came from.
 
-    # ---- derived measures, each None when its inputs are missing ----
-
-    @property
-    def market_cap(self) -> float | None:
-        if self.price and self.shares:
-            return self.price * self.shares
-        return None
-
-    @property
-    def pe(self) -> float | None:
-        if self.price and self.eps and self.eps > 0:
-            return self.price / self.eps
-        return None
-
-    @property
-    def ev_ebitda(self) -> float | None:
-        cap = self.market_cap
-        if cap is None or not self.ebitda or self.ebitda <= 0:
-            return None
-        ev = cap + (self.debt or 0) - (self.cash or 0)
-        return ev / self.ebitda if ev > 0 else None
-
-    @property
-    def fcf_yield(self) -> float | None:
-        cap, f = self.market_cap, self.fcf[-1] if self.fcf else None
-        if cap and f is not None:
-            return 100 * f / cap
-        return None
-
-    def _cagr(self, series: list[float], years: int = 3) -> float | None:
-        """Compound growth, refusing to compute across a sign change.
-
-        Growing from a loss to a profit has no meaningful percentage, and
-        forcing one produces figures that look spectacular and mean nothing.
-        """
-        if len(series) < years + 1:
-            return None
-        first, last = series[-(years + 1)], series[-1]
-        if first is None or last is None or first <= 0 or last <= 0:
-            return None
-        return 100 * ((last / first) ** (1 / years) - 1)
-
-    @property
-    def revenue_growth(self) -> float | None:
-        return self._cagr(self.revenue)
-
-    @property
-    def eps_growth(self) -> float | None:
-        if self.eps is None or len(self.net_income) < 4 or not self.shares:
-            return None
-        return self._cagr(self.net_income)
-
-    @property
-    def fcf_growth(self) -> float | None:
-        return self._cagr(self.fcf)
-
-    @property
-    def roic(self) -> float | None:
-        """Operating profit against the capital funding the business."""
-        if self.ebit is None or self.ebit <= 0:
-            return None
-        capital = (self.equity or 0) + (self.debt or 0) - (self.cash or 0)
-        if capital <= 0:
-            return None                    # buybacks can drive equity negative
-        return 100 * self.ebit / capital
-
-    @property
-    def operating_margin(self) -> float | None:
-        rev = self.revenue[-1] if self.revenue else None
-        if self.ebit is None or not rev:
-            return None
-        return 100 * self.ebit / rev
-
-    @property
-    def net_margin(self) -> float | None:
-        rev = self.revenue[-1] if self.revenue else None
-        ni = self.net_income[-1] if self.net_income else None
-        if ni is None or not rev:
-            return None
-        return 100 * ni / rev
-
-    @property
-    def net_debt_ebitda(self) -> float | None:
-        if not self.ebitda or self.ebitda <= 0:
-            return None
-        return ((self.debt or 0) - (self.cash or 0)) / self.ebitda
-
-    @property
-    def interest_cover(self) -> float | None:
-        if self.ebit is None or not self.interest or self.interest <= 0:
-            return None
-        return self.ebit / self.interest
-
-    @property
-    def current_ratio(self) -> float | None:
-        if not self.current_liabilities or self.current_assets is None:
-            return None
-        return self.current_assets / self.current_liabilities
-
-    @property
-    def cash_conversion(self) -> float | None:
-        ni = self.net_income[-1] if self.net_income else None
-        if self.ocf is None or not ni or ni <= 0:
-            return None
-        return self.ocf / ni
-
-    @property
-    def margin_stability(self) -> float | None:
-        """How steady the net margin has been. Higher is steadier.
-
-        Scored as the negative of the spread, so the ranking below -- which
-        always treats higher as better -- needs no special case.
-        """
-        pairs = [(n, r) for n, r in zip(self.net_income, self.revenue)
-                 if n is not None and r]
-        if len(pairs) < 4:
-            return None
-        margins = [100 * n / r for n, r in pairs[-5:]]
-        return -(max(margins) - min(margins))
-
-    @property
-    def dividend_yield(self) -> float | None:
-        if self.dps and self.price:
-            return 100 * self.dps / self.price
-        return None
-
-    @property
-    def dividend_cover(self) -> float | None:
-        """Earnings per share against the dividend paid out of them."""
-        if not self.dps or self.eps is None or self.eps <= 0:
-            return None
-        return self.eps / self.dps
-
-    @property
-    def volatility(self) -> float | None:
-        """Annualised spread of monthly returns. Lower is steadier.
-
-        Negated so the ranking below, which always treats higher as better,
-        needs no special case.
-        """
-        px = self.prices
-        if len(px) < 24:
-            return None
-        rets = [(b / a - 1) for a, b in zip(px, px[1:]) if a]
-        if len(rets) < 12:
-            return None
-        mean = sum(rets) / len(rets)
-        var = sum((r - mean) ** 2 for r in rets) / (len(rets) - 1)
-        return -(var ** 0.5) * (12 ** 0.5) * 100
-
-    @property
-    def worst_fall(self) -> float | None:
-        """Largest peak-to-trough fall in the period held. Negated, as above.
-
-        The figure that matters more than volatility for most people: not how
-        much a share wobbles, but how far it fell and stayed down.
-        """
-        px = self.prices
-        if len(px) < 24:
-            return None
-        peak, worst = px[0], 0.0
-        for p in px:
-            peak = max(peak, p)
-            if peak:
-                worst = min(worst, p / peak - 1)
-        return worst * 100
-
-    @property
-    def buyback_yield(self) -> float | None:
-        cap = self.market_cap
-        if cap and self.buybacks:
-            return 100 * abs(self.buybacks) / cap
-        return None
-
-
-# Each measure: attribute, whether higher is better, and its share of the
-# component. Weights within a component are equal unless stated.
-COMPONENTS: dict[str, list[tuple[str, bool]]] = {
-    "valuation": [("pe", False), ("ev_ebitda", False), ("fcf_yield", True)],
-    "growth": [("revenue_growth", True), ("eps_growth", True), ("fcf_growth", True)],
-    "profitability": [("roic", True), ("operating_margin", True), ("net_margin", True)],
-    "strength": [("net_debt_ebitda", False), ("interest_cover", True),
-                 ("current_ratio", True)],
-    "quality": [("cash_conversion", True), ("margin_stability", True)],
-    "returns": [("dividend_yield", True), ("dividend_cover", True),
-                ("buyback_yield", True)],
-    "stability": [("volatility", True), ("worst_fall", True)],
-}
-
-
-def _rank_scores(values: list[float | None], higher_better: bool) -> list[float | None]:
-    """Score each value 0-100 by its place among the others.
-
-    Ranked rather than scaled, because one extreme company would otherwise
-    compress everyone else into a narrow band. Ties share a score.
+    Returns ([], reason) when no defensible set exists -- the caller then asks
+    the reader to choose instead of guessing.
     """
-    have = [(i, v) for i, v in enumerate(values) if v is not None]
-    if len(have) < 2:
-        # A single company has nothing to be ranked against.
-        return [50.0 if v is not None else None for v in values]
+    tk = (ticker or "").strip().upper()
 
-    order = sorted(have, key=lambda p: p[1], reverse=higher_better)
-    out: list[float | None] = [None] * len(values)
-    n = len(order)
-    i = 0
-    while i < n:
-        j = i
-        while j + 1 < n and order[j + 1][1] == order[i][1]:
-            j += 1
-        # Average position for a tied group, so equal figures score equally.
-        score = 100.0 - (100.0 * ((i + j) / 2) / max(n - 1, 1))
-        for k in range(i, j + 1):
-            out[order[k][0]] = score
-        i = j + 1
-    return out
+    if tk in CURATED:
+        return CURATED[tk], ("curated", "Common comparisons for this company.")
 
+    if same_sic and sic and sic not in TOO_BROAD:
+        peers = [c["ticker"] for c in same_sic if c["ticker"].upper() != tk][:3]
+        if peers:
+            return peers, ("sic", "Filers sharing this company's SEC industry code.")
 
-@dataclass
-class Score:
-    ticker: str
-    total: float | None
-    components: dict[str, float | None]
-    coverage: float
-    missing: list[str]
-
-
-def rank(companies: list[Figures]) -> list[Score]:
-    """Score every company against the others, in the given order."""
-    if not companies:
-        return []
-
-    # Score each measure across the whole set first, so every company is
-    # judged on the same scale.
-    measure_scores: dict[str, list[float | None]] = {}
-    for comp, measures in COMPONENTS.items():
-        for attr, higher in measures:
-            vals = [getattr(c, attr) for c in companies]
-            measure_scores[attr] = _rank_scores(vals, higher)
-
-    out: list[Score] = []
-    for idx, c in enumerate(companies):
-        comps: dict[str, float | None] = {}
-        for comp, measures in COMPONENTS.items():
-            got = [measure_scores[a][idx] for a, _ in measures
-                   if measure_scores[a][idx] is not None]
-            comps[comp] = sum(got) / len(got) if got else None
-
-        usable = {k: v for k, v in comps.items() if v is not None}
-        weight_have = sum(WEIGHTS[k] for k in usable)
-        coverage = weight_have / sum(WEIGHTS.values())
-
-        if coverage < MIN_COVERAGE:
-            # Too little of the picture to put a number on.
-            total = None
-        else:
-            total = sum(v * WEIGHTS[k] for k, v in usable.items()) / weight_have
-
-        out.append(Score(
-            ticker=c.ticker,
-            total=total,
-            components=comps,
-            coverage=coverage,
-            missing=[LABELS[k] for k in WEIGHTS if comps.get(k) is None],
-        ))
-    return out
+    if sic in TOO_BROAD:
+        return [], ("broad", "This company's SEC industry code covers businesses too "
+                             "different to compare automatically.")
+    return [], ("none", "No comparison set has been checked for this company yet.")
