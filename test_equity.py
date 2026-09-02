@@ -1077,6 +1077,7 @@ def test_ranking():
             ebit=200, ebitda=250, ocf=180, debt=300, cash=400,
             equity=900, interest=20, current_assets=600,
             current_liabilities=300, dps=1.0, buybacks=50,
+            eps_series=[3.20, 3.80, 4.40, 5.00, 5.00],
             prices=[100 * (1.006 ** i) for i in range(120)])
         base.update(kw)
         return Figures(**base)
@@ -1089,6 +1090,7 @@ def test_ranking():
               ebit=90, ebitda=120, ocf=85, debt=900, cash=100,
               equity=700, interest=60, current_assets=500,
               current_liabilities=480, buybacks=None,
+              eps_series=[4.40, 4.30, 4.20, 4.10, 4.00],
               prices=[100 * (1.002 ** i) * (1.25 if i % 6 == 0 else 0.85
                       if i % 4 == 0 else 1) for i in range(120)])
 
@@ -1115,8 +1117,20 @@ def test_ranking():
     assert pair["NODIV"].components["returns"] is None
     assert pair["NODIV"].total is not None, "other components still score"
 
+    # EPS growth must follow the per-share series, not net income: a company
+    # buying back stock grows profit per share faster than profit, and one
+    # issuing shares grows it slower. Using net income credited the wrong one.
+    buyer = mk("BUYER", net_income=[100, 105, 110, 115],
+               eps_series=[1.00, 1.12, 1.26, 1.42])
+    diluter = mk("DILUTER", net_income=[100, 105, 110, 115],
+                 eps_series=[1.00, 0.98, 0.97, 0.96])
+    assert buyer.eps_growth > 10, buyer.eps_growth
+    assert diluter.eps_growth < 0, diluter.eps_growth
+    assert mk("NOEPS", eps_series=[]).eps_growth is None
+
     # A loss-maker gets no P/E and no growth rate rather than a negative one.
     loser = mk("LOSER", eps=-1.0, net_income=[-50, -60, -70, -80, -90],
+               eps_series=[-0.5, -0.6, -0.7, -0.8, -0.9],
                fcf=[-20, -25, -30, -35, -40], ebit=-30, ebitda=-10)
     assert loser.pe is None and loser.eps_growth is None
     assert loser.roic is None and loser.ev_ebitda is None
