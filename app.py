@@ -1618,12 +1618,26 @@ if mode == "Compare":
                         unsafe_allow_html=True)
 
             top, bottom = scored[0], scored[-1]
+
+            # A company below the no-growth marker reads 0%, and that is the
+            # more interesting half of the finding: the market is pricing in
+            # no growth at all, which is either an opportunity or a warning.
+            if bottom["pct"] <= 1 and bottom["pe"]:
+                tail = (f'<b>{E(bottom["name"])}</b> sits at <b>{bottom["pe"]:,.1f}×</b> '
+                        "earnings — below what a business with no growth ahead of it "
+                        "would fetch. <b>The market is pricing in no growth at all.</b> "
+                        "That is sometimes a company being overlooked, and sometimes "
+                        "investors expecting profits to fall. The filings can tell you "
+                        "which by whether earnings are still growing.")
+            else:
+                tail = (f'<b>{E(bottom["name"])}</b> has the least, at '
+                        f'<b>{bottom["pct"]:.0f}%</b>, so more of what you pay there is '
+                        "profit the company has already reported.")
+
             st.markdown(
                 f'<div class="readout"><p><b>{E(top["name"])}</b> has the most riding on '
                 f'results still to come — about <b>{top["pct"]:.0f}%</b> of its price. '
-                f'<b>{E(bottom["name"])}</b> has the least, at <b>{bottom["pct"]:.0f}%</b>, '
-                "so more of what you pay there is profit the company has already "
-                "reported.</p>"
+                + tail + "</p>"
                 "<p>Neither is better. A price built on expectations rises further when "
                 "results beat and falls further when they miss; a price built on earned "
                 "profit does less of both. <b>Which suits you depends on how long you can "
