@@ -911,6 +911,54 @@ def test_quarters_from_ytd():
     print("ytd quarters ok")
 
 
+
+
+def test_never_more_than_four_quarters():
+    """A fiscal year has four quarters, whatever the filing data looks like.
+
+    Two things produced more: a full-year period being mistaken for a
+    year-to-date total and differenced into an extra quarter, and an annual
+    report old enough that two years of quarters fell after it.
+    """
+    rows = [
+        dur("2025-01-01", "2025-12-31", 16_000),                 # the annual figure
+        dur("2026-01-01", "2026-03-31", 4_100, form="10-Q", filed="2026-05-01"),
+        dur("2026-01-01", "2026-06-30", 8_400, form="10-Q", filed="2026-08-01"),
+        dur("2026-01-01", "2026-09-30", 12_900, form="10-Q", filed="2026-11-01"),
+        # A full year tagged in a 10-K. This must not be read as cumulative.
+        dur("2026-01-01", "2026-12-31", 17_500, form="10-K", filed="2027-02-01"),
+    ]
+    eq = extract_equity(build("FULL YEAR TRAP", {
+        "Revenues": {"units": {"USD": rows}},
+        "NetIncomeLoss": {"units": {"USD": [dur("2025-01-01", "2025-12-31", 1_600)]}},
+    }))
+    labels = [p.fp for p in eq.quarters]
+    assert len(labels) <= 4, labels
+    assert len(set(labels)) == len(labels), f"duplicate quarters: {labels}"
+    for l in labels:
+        assert l in {"Q1", "Q2", "Q3", "Q4"}, l
+
+    # Two years of quarterly data after a stale annual report.
+    many = [dur("2024-01-01", "2024-12-31", 15_000)]
+    for y, vals in ((2025, [3_800, 3_900, 4_000, 4_300]),
+                    (2026, [4_100, 4_300, 4_500, 4_800])):
+        st_ = {1: f"{y}-01-01", 2: f"{y}-04-01", 3: f"{y}-07-01", 4: f"{y}-10-01"}
+        en = {1: f"{y}-03-31", 2: f"{y}-06-30", 3: f"{y}-09-30", 4: f"{y}-12-31"}
+        for i, v in enumerate(vals, 1):
+            many.append(dur(st_[i], en[i], v, form="10-Q", filed=f"{y}-12-01"))
+
+    eq2 = extract_equity(build("STALE ANNUAL", {
+        "Revenues": {"units": {"USD": many}},
+        "NetIncomeLoss": {"units": {"USD": [dur("2024-01-01", "2024-12-31", 1_500)]}},
+    }))
+    labels2 = [p.fp for p in eq2.quarters]
+    assert len(labels2) <= 4, labels2
+    assert len(set(labels2)) == len(labels2), f"duplicate quarters: {labels2}"
+    # The four kept must be the most recent ones.
+    assert eq2.quarters[-1].get("revenue") == 4_800, eq2.quarters[-1].get("revenue")
+    print("quarter count bounded ok")
+
+
 def main():
     test_clean()
     test_valuation()
@@ -929,6 +977,7 @@ def main():
     test_quarters_across_tags()
     test_quarter_numbering()
     test_quarters_from_ytd()
+    test_never_more_than_four_quarters()
     print("\nAll checks passed.")
 
 
