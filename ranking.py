@@ -49,7 +49,7 @@ LABELS = {
 MEASURES = {
     "valuation": "P/E, EV/EBITDA, free-cash-flow yield",
     "growth": "3-year revenue, EPS and free-cash-flow growth",
-    "profitability": "return on capital, operating margin, net margin",
+    "profitability": "return on capital employed, operating margin, net margin",
     "strength": "net debt/EBITDA, interest coverage, current ratio",
     "quality": "cash flow against reported profit, margin stability",
     "returns": "dividend yield, dividend cover, buybacks",
@@ -73,6 +73,7 @@ class Figures:
     revenue: list[float] = field(default_factory=list)     # oldest first
     net_income: list[float] = field(default_factory=list)
     fcf: list[float] = field(default_factory=list)
+    eps_series: list[float] = field(default_factory=list)
     ebit: float | None = None
     ebitda: float | None = None
     ocf: float | None = None
@@ -137,9 +138,14 @@ class Figures:
 
     @property
     def eps_growth(self) -> float | None:
-        if self.eps is None or len(self.net_income) < 4 or not self.shares:
-            return None
-        return self._cagr(self.net_income)
+        """Growth in profit per share, not in profit.
+
+        These differ whenever the share count changes: a company buying back
+        stock grows earnings per share faster than earnings, and one issuing
+        shares grows it slower. Using net income here would have credited or
+        penalised the wrong thing.
+        """
+        return self._cagr(self.eps_series)
 
     @property
     def fcf_growth(self) -> float | None:
