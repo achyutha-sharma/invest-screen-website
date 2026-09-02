@@ -749,6 +749,16 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
   color:var(--text-2)}
 .wtable td:first-child,.wtable th:first-child{text-align:left}
 
+
+/* the forward estimate, given its own card */
+.nextq{background:rgba(169,139,255,.08);border:1px solid var(--acc-dim);
+  border-radius:10px;padding:.9rem 1.05rem;margin-bottom:.8rem}
+.nextq .k{display:block;font-size:.58rem;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--text-3);font-weight:700}
+.nextq .v{display:block;font-family:var(--mono);font-size:1.5rem;font-weight:700;
+  color:#FFFFFF;margin:.25rem 0 .15rem}
+.nextq .d{display:block;font-size:.78rem;color:var(--text-2)}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -852,6 +862,20 @@ def return_shape(pct_expectations: float, dividend_yield: float) -> tuple[str, s
                           "reported, whatever the price does.")
     return ("earned", "Little is riding on future growth, but nothing is paid out "
                       "either — the return has to come from the price.")
+
+
+def pretty_period(iso: str) -> str:
+    """A quarter end as a readable date.
+
+    Fiscal quarter labels are shown as the filer numbers them, which runs
+    ahead of the calendar for anyone whose year does not end in December --
+    "Q2 2027" for a quarter that ended in autumn 2026 reads as an error even
+    though it is correct. The date is unambiguous.
+    """
+    try:
+        return date.fromisoformat(iso[:10]).strftime("%b %Y")
+    except Exception:
+        return iso[:10] or "—"
 
 
 def price_chart(hist, label=""):
@@ -1898,7 +1922,7 @@ if mode == "Compare":
                 if r["next"]:
                     nq = r["next"]
                     nxt = (f'<span class="est">{D}{nq["estimate"]:,.2f}'
-                           f'<i>Q{nq["quarter"]} {nq["year"]}</i></span>')
+                           f'<i>to {E(pretty_period(nq["period"]))}</i></span>')
                 else:
                     nxt = '<span class="ret none">—</span>'
 
@@ -2439,45 +2463,69 @@ st.markdown(f'''<div class="panel">
 # -- so the section says where they came from and what a run of beats does and
 # does not mean.
 
-surp = [r for r in surprises(ticker) if r.get("actual") is not None][:4]
+# A fiscal quarter label can run ahead of the calendar -- a company whose year
+# ends in May labels autumn 2026 as "Q2 2027" -- so the period end date is
+# shown instead. It also guards against a feed row claiming a result for a
+# quarter that has not finished.
+_today = date.today().isoformat()
+surp = [r for r in surprises(ticker)
+        if r.get("actual") is not None and r.get("period", "") <= _today][:4]
 if surp:
-    sh("Expected against reported", "analyst estimates, not filings")
+    sh("What analysts expected", "not from filings")
+
+    st.markdown(
+        '<div class="explain"><p>Before a company reports, analysts publish a figure '
+        "they expect it to earn per share. <b>The share price already reflects that "
+        "figure</b>, so what moves the price is the gap between the guess and the "
+        "result — not whether profits went up.</p></div>", unsafe_allow_html=True)
+
+    nq = next_estimate(ticker)
+    if nq:
+        st.markdown(
+            f'<div class="nextq"><span class="k">Next quarter</span>'
+            f'<span class="v">{D}{nq["estimate"]:,.2f}</span>'
+            f'<span class="d">expected per share for the quarter ending '
+            f'{E(pretty_period(nq["period"]))}</span></div>', unsafe_allow_html=True)
+
     rows = ""
     beats = 0
     for r in surp:
         beat = r["actual"] >= r["estimate"]
         beats += 1 if beat else 0
         gap = r["surprise_pct"]
+        # Said in words, because "▲ 8.2%" alone does not tell a reader which
+        # number was bigger or what the direction means.
+        if gap is None or abs(gap) < 0.5:
+            verdict = '<span class="ret none">as expected</span>'
+        else:
+            verdict = (f'<span class="ret {"up" if beat else "down"}">'
+                       f'{abs(gap):,.1f}% {"more" if beat else "less"}</span>')
         rows += (
-            f'<tr><td>Q{r["quarter"]} {r["year"]}</td>'
+            f'<tr><td>{E(pretty_period(r["period"]))}</td>'
             f'<td>{D}{r["estimate"]:,.2f}</td>'
             f'<td>{D}{r["actual"]:,.2f}</td>'
-            f'<td class="{"good" if beat else "weak"}">'
-            + (f'{"▲" if beat else "▼"} {abs(gap):,.1f}%' if gap is not None else "—")
-            + "</td></tr>")
+            f"<td>{verdict}</td></tr>")
 
     st.markdown(
-        '<div class="panel"><table class="comp"><thead><tr><th>Quarter</th>'
-        "<th>Expected</th><th>Reported</th><th>Difference</th></tr></thead>"
+        '<div class="panel"><table class="comp"><thead><tr>'
+        "<th>Quarter ending</th><th>Analysts expected</th><th>Company reported</th>"
+        "<th>Difference</th></tr></thead>"
         f"<tbody>{rows}</tbody></table></div>", unsafe_allow_html=True)
 
     n = len(surp)
-    if beats == n:
-        verdict = (f"Beat expectations in all {n} of the last {n} quarters.")
-    elif beats == 0:
-        verdict = (f"Missed expectations in all {n} of the last {n} quarters.")
-    else:
-        verdict = (f"Beat expectations in {beats} of the last {n} quarters.")
+    st.markdown(
+        f'<div class="readout"><p><b>Came in above the estimate in {beats} of the last '
+        f'{n} quarter{"s" if n != 1 else ""}.</b></p>'
+        "<p>Most large companies beat most quarters, so this on its own says little. "
+        "Companies talk to analysts before reporting and guide them toward a number "
+        "they are confident of clearing. <b>A beat against a bar that keeps being "
+        "lowered is not growth</b> — check whether the expected figures themselves are "
+        "rising.</p></div>", unsafe_allow_html=True)
 
-    st.markdown(f'<div class="readout"><p>{verdict}</p>'
-                "<p><b>A run of beats is not as impressive as it sounds.</b> Companies "
-                "guide analysts toward a number they are confident of clearing, so most "
-                "large companies beat most quarters. <b>What matters more is the "
-                "direction of the estimates themselves</b> — a company beating a bar "
-                "that keeps being lowered is not growing.</p></div>",
-                unsafe_allow_html=True)
-    st.caption("Estimates come from a market data feed, not from SEC filings — they are "
-               "what analysts predicted, not something the company reported.")
+    st.caption("Quarters are shown by the month they ended, not by the company's own "
+               "fiscal numbering, which runs ahead of the calendar for filers whose "
+               "year does not end in December. Estimates come from a market data feed, "
+               "not from SEC filings.")
 
 # --------------------------------------------------------------------------
 # Notes and footer
