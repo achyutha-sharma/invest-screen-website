@@ -422,23 +422,25 @@ def _current_year_quarters(store: EquityStore, latest_fy_end: date) -> list[Peri
     # quarters fall after it -- so keep the four most recent.
     ends = sorted(revenue)[-4:]
 
-    # Quarters are numbered from the fiscal year end that actually precedes
-    # them, not from the newest annual report on file. Measuring from a stale
-    # annual report pushed every quarter past the fourth, where the clamp
-    # collapsed them all onto Q4.
-    anchor = latest_fy_end
-    while ends and (ends[0].year - anchor.year) * 12 + (ends[0].month - anchor.month) > 12:
-        anchor = anchor.replace(year=anchor.year + 1)
+    # Quarter numbers come from the month a quarter ends in, relative to the
+    # month the fiscal year ends in. Counting elapsed months from a specific
+    # year-end date drifted whenever that date was stale or a filer used a
+    # 52/53-week calendar; the month offset cannot drift, because a fiscal
+    # year is always twelve months long whatever year it sits in.
+    fy_month = latest_fy_end.month
+
+    def quarter_of(end: date) -> int:
+        return ((end.month - fy_month - 1) % 12) // 3 + 1
+
+    # Two ends landing on the same quarter means one is not a quarter at all.
+    # Keep the later, which is the one the newest filing reported.
+    picked: dict[int, date] = {}
+    for end in ends:
+        picked[quarter_of(end)] = end
 
     out = []
-    for end in ends:
-        # Numbered by where the quarter falls in the fiscal year, not by the
-        # order it was found. A company missing its first quarter used to have
-        # its second labelled Q1, which then compared against the wrong
-        # quarter a year earlier.
-        months = (end.year - anchor.year) * 12 + (end.month - anchor.month)
-        qn = max(1, min(4, (months + 2) // 3))
-
+    for qn in sorted(picked):
+        end = picked[qn]
         p = Period(end=end, fy=end.year, fp=f"Q{qn}")
         p.inputs["revenue"] = revenue[end]
         p.sources["revenue"] = "10-Q"
