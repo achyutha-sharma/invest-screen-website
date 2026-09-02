@@ -767,6 +767,35 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 .bigscore p{margin:.6rem 0 0;font-size:.86rem;color:var(--text-2);line-height:1.6;
   max-width:70ch}
 
+
+/* the working behind a score */
+.working{display:grid;gap:.65rem}
+.cblock{background:var(--surf);border:1px solid var(--line);border-radius:9px;
+  padding:.75rem .9rem}
+.chead{display:flex;align-items:baseline;gap:.55rem;flex-wrap:wrap}
+.chead b{font-size:.9rem;color:#FFFFFF}
+.chead i{font-style:normal;font-size:.68rem;color:var(--text-3);
+  font-family:var(--mono)}
+.cscore{margin-left:auto;font-family:var(--mono);font-size:.9rem;font-weight:700;
+  padding:.1rem .45rem;border-radius:10px}
+.cscore.up{background:rgba(95,214,155,.15);color:var(--up)}
+.cscore.mid{background:rgba(169,139,255,.15);color:var(--acc)}
+.cscore.down{background:rgba(255,123,138,.13);color:var(--down)}
+.cscore.none{background:var(--surf-2);color:var(--text-3);font-size:.68rem}
+.mlist{list-style:none;padding:0;margin:.55rem 0 0}
+.mlist li{display:grid;grid-template-columns:1fr auto;gap:.15rem .6rem;
+  padding:.4rem 0;border-bottom:1px solid var(--line)}
+.mlist li:last-child{border-bottom:0}
+.mlist .ml{font-size:.82rem;color:var(--text);font-weight:600}
+.mlist .mv{font-family:var(--mono);font-size:.85rem;font-weight:700;color:#FFFFFF;
+  text-align:right}
+.mlist .mv.none{color:var(--text-3);font-weight:400;font-size:.72rem}
+.mlist .mr{grid-column:2;font-family:var(--mono);font-size:.66rem;color:var(--acc);
+  text-align:right}
+.mlist .mw{grid-column:1;font-size:.72rem;color:var(--text-3);line-height:1.45}
+.why{margin:.5rem 0 0;font-size:.78rem;color:var(--text-2);line-height:1.5}
+.why b{color:#FFFFFF}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -950,6 +979,72 @@ def peer_score(tick: str, cik_: str, sic: str):
     except Exception:
         return None
     return marks.get(tick.upper()) or marks.get(figs[0].ticker)
+
+
+def score_working(mark, name: str = "") -> str:
+    """The figures behind each component, as HTML.
+
+    A score with no working is an assertion. This shows every measure that
+    fed it: the company's own figure, where it placed among the companies
+    compared, and what the measure means.
+    """
+    blocks = ""
+    for key in ranking.WEIGHTS:
+        rows = mark.detail.get(key) or []
+        comp = mark.components.get(key)
+        usable = [r for r in rows if r["score"] is not None]
+
+        if comp is None:
+            head = ('<span class="cscore none">not scored</span>')
+            note = ("<p class='why'>None of these could be computed from the "
+                    "filings, so this component was left out and the others "
+                    "reweighted.</p>")
+        else:
+            band = "up" if comp >= 60 else "down" if comp < 40 else "mid"
+            head = f'<span class="cscore {band}">{comp:.0f}</span>'
+            best = max(usable, key=lambda r: r["score"])
+            worst = min(usable, key=lambda r: r["score"])
+            if len(usable) == 1:
+                note = (f"<p class='why'>One measure available, so the component "
+                        f"score is its score.</p>")
+            elif best["score"] == worst["score"]:
+                note = (f"<p class='why'>All {len(usable)} measures placed the same, "
+                        "so the component score is that placing.</p>")
+            else:
+                note = (f"<p class='why'>Strongest on <b>{E(best['label'].lower())}</b>, "
+                        f"weakest on <b>{E(worst['label'].lower())}</b>. The component "
+                        f"score is the average of {len(usable)}.</p>")
+
+        lines = ""
+        for r in rows:
+            if r["score"] is None:
+                lines += (f'<li><span class="ml">{E(r["label"])}</span>'
+                          '<span class="mv none">not filed</span>'
+                          f'<span class="mw">{E(r["what"])}</span></li>')
+            else:
+                # A shared figure is joint-placed. Everyone sharing it is not
+                # a placing at all, and saying "joint 1 of 4" beside a middling
+                # score would read as a contradiction.
+                shared = r.get("shared", 1)
+                if not r["place"]:
+                    place = "only one"
+                elif shared >= r["of"] > 1:
+                    place = f'all {r["of"]} the same'
+                elif shared > 1:
+                    place = f'joint {r["place"]} of {r["of"]}'
+                else:
+                    place = f'{r["place"]} of {r["of"]}' 
+                lines += (f'<li><span class="ml">{E(r["label"])}</span>'
+                          f'<span class="mv">{E(r["value"])}</span>'
+                          f'<span class="mr">{place} · scores '
+                          f'{r["score"]:.0f}</span>'
+                          f'<span class="mw">{E(r["what"])}</span></li>')
+
+        blocks += (f'<div class="cblock"><div class="chead">'
+                   f'<b>{E(ranking.LABELS[key])}</b>'
+                   f'<i>{ranking.WEIGHTS[key]}% of the score</i>{head}</div>'
+                   f"<ul class='mlist'>{lines}</ul>{note}</div>")
+    return f'<div class="working">{blocks}</div>'
 
 
 def pretty_period(iso: str) -> str:
@@ -2148,6 +2243,21 @@ if mode == "Compare":
                            "weighted into the score. A missing bar means the filings did "
                            "not contain enough to score it.")
 
+            worked = [r for r in scored if marks.get(r["ticker"])]
+            if worked:
+                with st.expander("How these scores were worked out"):
+                    pick = st.radio(
+                        "Company", [r["name"] for r in worked],
+                        horizontal=True, key=f"work_{cik}",
+                        label_visibility="collapsed")
+                    chosen = next((r for r in worked if r["name"] == pick), worked[0])
+                    st.markdown(score_working(marks[chosen["ticker"]], chosen["name"]),
+                                unsafe_allow_html=True)
+                    st.caption("Every figure comes from the company's filings; share "
+                               "price and price history come from a market feed. A "
+                               "placing is against the other companies in this "
+                               "comparison only.")
+
             others = [r for r in scored if not r["self"]]
             if others:
                 cols = st.columns(min(len(others), 4))
@@ -2594,21 +2704,8 @@ if mine and mine.total is not None:
         "something else, so this is a placing among peers — not a verdict.</p>"
         "</div>", unsafe_allow_html=True)
 
-    rows_ = ""
-    for k in ranking.WEIGHTS:
-        v = mine.components.get(k)
-        cell = ("<span class='ret none'>not filed</span>" if v is None else
-                f'<span class="ret {"up" if v >= 60 else "down" if v < 40 else "none"}">'
-                f"{v:.0f}</span>")
-        rows_ += (f'<tr><td>{E(ranking.LABELS[k])}</td>'
-                  f'<td class="wgt">{ranking.WEIGHTS[k]}%</td>'
-                  f"<td>{cell}</td>"
-                  f'<td class="meas">{E(ranking.MEASURES[k])}</td></tr>')
-    st.markdown(
-        '<div class="panel" style="overflow-x:auto"><table class="comp wtable">'
-        "<thead><tr><th>Component</th><th>Weight</th><th>Score</th>"
-        "<th>Measured by</th></tr></thead>"
-        f"<tbody>{rows_}</tbody></table></div>", unsafe_allow_html=True)
+    with st.expander("How this score was worked out", expanded=False):
+        st.markdown(score_working(mine), unsafe_allow_html=True)
     st.caption(
         "Each component is scored 0-100 against the peer set, then weighted. "
         "**Price stability** measures the share, not the business — a steady price "
