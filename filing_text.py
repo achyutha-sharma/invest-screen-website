@@ -360,6 +360,88 @@ def latest_filings(client, cik: str, forms=("10-K", "10-Q", "8-K"), limit: int =
     return out
 
 
+def insider_activity(client, cik: str, limit: int = 6) -> dict:
+    """Recent Form 4 filings -- insiders trading their own company's shares.
+
+    Only the fact and date of each filing are read here, not the transaction
+    detail, which lives in an XML exhibit. That is deliberate: the count and
+    direction of *filings* is the honest, easily-verified part, and inferring
+    intent from amounts is exactly where this kind of data gets over-read.
+    """
+    out = {"filings": [], "problem": ""}
+    try:
+        recent = latest_filings(client, cik, forms=("4",), limit=limit)
+    except Exception:
+        out["problem"] = "Insider filings could not be read."
+        return out
+    if not recent:
+        out["problem"] = "No Form 4 filings were found in the recent index."
+        return out
+    out["filings"] = [{"filed": f["filed"], "url": f["url"]} for f in recent]
+    return out
+
+
+def _norm_risk(text: str) -> str:
+    """A risk heading reduced to its comparable core.
+
+    Filers reword headings between years without changing the risk: "may
+    adversely affect" becomes "could materially affect". Comparing only the
+    content words catches those as the same risk, instead of reporting one
+    removal and one addition for what is the same sentence rewritten.
+    """
+    words = re.findall(r"[a-z]{4,}", text.lower())
+    skip = {"could", "would", "should", "might", "will", "have", "been", "that",
+            "this", "which", "these", "those", "with", "from", "into", "such",
+            "than", "then", "them", "they", "were", "when", "what", "your",
+            "adversely", "materially", "significantly", "negatively", "affect",
+            "affected", "result", "results"}
+    return " ".join(w for w in words if w not in skip)[:110]
+
+
+def risk_changes(client, cik: str) -> dict:
+    """What changed in the risk factors between the last two annual reports.
+
+    Companies rarely drop a risk once it is listed, so an addition means
+    something changed enough for it to be written down. Comparing two filings
+    is where the signal is -- any single year's list is mostly boilerplate.
+
+    Never raises. An empty result means the page shows no comparison, which is
+    better than showing a wrong one.
+    """
+    out = {"added": [], "removed": [], "this_year": "", "last_year": "",
+           "problem": ""}
+
+    annuals = latest_filings(client, cik, forms=("10-K",), limit=3)
+    if len(annuals) < 2:
+        out["problem"] = ("Only one annual report is available, so there is nothing to "
+                          "compare against.")
+        return out
+
+    lists = []
+    for f in annuals[:2]:
+        try:
+            import requests
+
+            r = requests.get(f["url"], timeout=30, headers=client.headers)
+            r.raise_for_status()
+            risks, why = extract_risks(to_text(r.text), limit=40)
+        except Exception:
+            risks, why = [], "A filing could not be downloaded."
+        if not risks:
+            out["problem"] = why or "Risk factors could not be read from both filings."
+            return out
+        lists.append((f["filed"], risks))
+
+    (this_filed, this_risks), (last_filed, last_risks) = lists
+    out["this_year"], out["last_year"] = this_filed, last_filed
+
+    last_keys = {_norm_risk(r) for r in last_risks}
+    this_keys = {_norm_risk(r) for r in this_risks}
+    out["added"] = [r for r in this_risks if _norm_risk(r) not in last_keys]
+    out["removed"] = [r for r in last_risks if _norm_risk(r) not in this_keys]
+    return out
+
+
 def read_filing(client, cik: str, form_prefix: str = "10-K") -> FilingText:
     """Fetch the newest filing of a type and pull its prose sections.
 
