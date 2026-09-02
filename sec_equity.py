@@ -382,7 +382,7 @@ def _quarter_spans(store: EquityStore, latest_fy_end: date, chain) -> dict[date,
             if 60 <= span <= 110:
                 if end not in direct or filed > direct[end][0]:
                     direct[end] = (filed, float(e["val"]))
-            elif 150 <= span <= 400 and start <= latest_fy_end + timedelta(days=20):
+            elif 150 <= span <= 300 and start <= latest_fy_end + timedelta(days=20):
                 # A cumulative period running from the start of the fiscal year.
                 if end not in ytd or filed > ytd[end][0]:
                     ytd[end] = (filed, float(e["val"]))
@@ -417,13 +417,26 @@ def _current_year_quarters(store: EquityStore, latest_fy_end: date) -> list[Peri
     if not revenue:
         return []
 
+    # A year has four quarters. More than that means the fiscal year boundary
+    # was misread -- usually an annual report old enough that two years of
+    # quarters fall after it -- so keep the four most recent.
+    ends = sorted(revenue)[-4:]
+
+    # Quarters are numbered from the fiscal year end that actually precedes
+    # them, not from the newest annual report on file. Measuring from a stale
+    # annual report pushed every quarter past the fourth, where the clamp
+    # collapsed them all onto Q4.
+    anchor = latest_fy_end
+    while ends and (ends[0].year - anchor.year) * 12 + (ends[0].month - anchor.month) > 12:
+        anchor = anchor.replace(year=anchor.year + 1)
+
     out = []
-    for end in sorted(revenue):
+    for end in ends:
         # Numbered by where the quarter falls in the fiscal year, not by the
         # order it was found. A company missing its first quarter used to have
         # its second labelled Q1, which then compared against the wrong
         # quarter a year earlier.
-        months = (end.year - latest_fy_end.year) * 12 + (end.month - latest_fy_end.month)
+        months = (end.year - anchor.year) * 12 + (end.month - anchor.month)
         qn = max(1, min(4, (months + 2) // 3))
 
         p = Period(end=end, fy=end.year, fp=f"Q{qn}")
