@@ -1835,7 +1835,11 @@ st.markdown(f'<span class="tk">{E(ticker)}</span><h2 class="co">{E(eq.entity)}{d
             f'{E(latest.label)} · Form 10-K</p>', unsafe_allow_html=True)
 
 _views = ["Research", "Compare", "Teach me"]
-_want = 1 if st.session_state.pop("goto_teach", False) else None
+# Looked up by name, not by position. This was a hard-coded 1, which meant
+# "Teach me" until Compare was added in the middle and the glossary link
+# started opening the wrong view.
+_want = (_views.index("Teach me")
+         if st.session_state.pop("goto_teach", False) else None)
 if _want is not None:
     st.session_state.pop("mode", None)
 mode = st.radio("View", _views, index=_want if _want is not None else 0,
