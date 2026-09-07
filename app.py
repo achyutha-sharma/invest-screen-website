@@ -804,6 +804,16 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 .parts td.tot{font-family:var(--mono);font-weight:700;color:#FFFFFF;
   border-left:1px solid var(--line)}
 
+
+/* headlines under a mover */
+.mvnews{margin-top:.7rem;border-top:1px solid var(--line);padding-top:.55rem}
+.mvnews a{display:block;text-decoration:none;padding:.4rem 0;border-bottom:1px solid var(--line)}
+.mvnews a:last-child{border-bottom:0}
+.mvnews .nh{display:block;font-size:.83rem;color:var(--text);line-height:1.45}
+.mvnews a:hover .nh{color:var(--acc-2);text-decoration:underline}
+.mvnews .ns{display:block;font-family:var(--mono);font-size:.62rem;color:var(--text-3);
+  margin-top:.15rem}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -1050,6 +1060,15 @@ def facts(cik: str):
 @st.cache_data(show_spinner=False)
 def profile(cik: str):
     return client.company_profile(cik)
+
+
+@st.cache_data(show_spinner=False, ttl=1_800)
+def headlines(ticker: str):
+    """Recent third-party headlines. Best-effort, never required."""
+    try:
+        return prices.news(ticker)
+    except Exception:
+        return []
 
 
 @st.cache_data(show_spinner=False, ttl=21_600)
@@ -1359,13 +1378,27 @@ if "cik" not in st.session_state and not query and prices.configured:
                 link = f'<a href="{E(f["url"])}" target="_blank" rel="noopener">read it</a>'
             elif f:
                 note = (f'Nothing filed since the <b>{E(f["form"])}</b> on '
-                        f'{E(f["filed"])}. <b>A move this size with no new filing means '
-                        "the market is reacting to something the filings cannot see</b> — "
-                        "results from elsewhere, guidance, or an analyst view.")
+                        f'{E(f["filed"])}, so whatever moved it is not in the filings.')
                 link = ""
             else:
                 note = "No recent filings were found for this ticker."
                 link = ""
+
+            # Headlines from around the move. Third-party reporting, shown
+            # because of when it was published -- which is not the same as
+            # saying it caused anything.
+            news = headlines(r["ticker"])[:3]
+            feed = ""
+            if news:
+                feed = ('<div class="mvnews">'
+                        + "".join(
+                            f'<a href="{E(n["url"])}" target="_blank" rel="noopener">'
+                            f'<span class="nh">{E(n["headline"])}</span>'
+                            f'<span class="ns">{E(n["source"])}'
+                            + (f' · {E(n["when"])}' if n.get("when") else "")
+                            + "</span></a>"
+                            for n in news)
+                        + "</div>")
 
             st.markdown(
                 f'<div class="move"><div class="mvhead">'
@@ -1376,6 +1409,26 @@ if "cik" not in st.session_state and not query and prices.configured:
                 f'<span class="mvpx">{D}{r["price"]:,.2f}</span></div>'
                 f'<p class="mvw">{context.capitalize()}. {note} {link}</p></div>',
                 unsafe_allow_html=True)
+
+            # Coverage sits behind a toggle rather than under the move.
+            # Printed directly beneath a 6% fall, a headline reads as the
+            # reason for it, which is a claim the data cannot support.
+            news = headlines(r["ticker"])[:3]
+            if news:
+                with st.expander(f"Recent coverage of {r['name'] or r['ticker']}"):
+                    st.markdown(
+                        '<div class="mvnews">'
+                        + "".join(
+                            f'<a href="{E(n["url"])}" target="_blank" rel="noopener">'
+                            f'<span class="nh">{E(n["headline"])}</span>'
+                            f'<span class="ns">{E(n["source"])}'
+                            + (f' · {E(n["when"])}' if n.get("when") else "")
+                            + "</span></a>"
+                            for n in news)
+                        + "</div>", unsafe_allow_html=True)
+                    st.caption("Published around the same time as the move. That is "
+                               "timing, not cause — a story can follow a fall as "
+                               "easily as explain it.")
 
         cols = st.columns(len(moves))
         for col, r in zip(cols, moves):
