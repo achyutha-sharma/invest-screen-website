@@ -1321,9 +1321,32 @@ if st.session_state.get("fund"):
 # filings cannot see".
 
 WATCHLIST = [
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AVGO",
-    "JPM", "V", "WMT", "XOM", "JNJ", "PG", "HD", "KO",
-    "NFLX", "NKE", "SBUX", "DIS", "PFE", "MRNA", "INTC", "AMD",
+    # Technology and semiconductors
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO", "ORCL",
+    "CRM", "ADBE", "AMD", "INTC", "QCOM", "TXN", "MU", "NOW",
+    "PANW", "CRWD", "SNOW", "DDOG", "SHOP", "UBER", "ABNB", "IBM",
+    "PLTR", "SMCI", "ARM", "DELL",
+
+    # Financials
+    "JPM", "BAC", "WFC", "GS", "MS", "C", "V", "MA",
+    "AXP", "COF", "SCHW", "HOOD", "COIN", "BLK", "SPGI", "PGR",
+
+    # Health care
+    "LLY", "JNJ", "UNH", "ABBV", "MRK", "PFE", "TMO", "ABT",
+    "AMGN", "BMY", "MRNA", "ISRG", "SYK", "CVS", "MDT", "DXCM",
+
+    # Consumer
+    "WMT", "COST", "HD", "LOW", "TGT", "NKE", "LULU", "SBUX",
+    "MCD", "CMG", "KO", "PEP", "PG", "DIS", "NFLX", "BKNG",
+    "TSLA", "GM", "F", "DECK", "ULTA", "TJX", "DG", "YUM",
+
+    # Industrials, energy and materials
+    "CAT", "DE", "BA", "LMT", "RTX", "GE", "HON", "UPS",
+    "UNP", "XOM", "CVX", "COP", "NEE", "DUK", "SO", "FCX",
+    "NUE", "LIN", "DOW", "SHW",
+
+    # Communications and property
+    "T", "VZ", "TMUS", "CMCSA", "AMT", "PLD", "EQIX", "SPG",
 ]
 
 
@@ -1335,15 +1358,22 @@ def biggest_moves(tickers: tuple, market_pct: float | None):
     looking at as a 10% rise, and a board that only shows green teaches the
     wrong instinct.
     """
-    out = []
-    for tk in tickers:
+    # Fetched in parallel. A hundred quotes one after another takes long
+    # enough that the page appears to hang on a cold cache; the worker count
+    # is deliberately modest to stay inside the feed's rate limit.
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(tk):
         try:
             qt = prices.quote(tk)
         except Exception:
-            continue
+            return None
         if not (qt.available and qt.day_change_pct is not None):
-            continue
-        out.append({"ticker": tk, "price": qt.price, "pct": qt.day_change_pct})
+            return None
+        return {"ticker": tk, "price": qt.price, "pct": qt.day_change_pct}
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        out = [r for r in pool.map(one, tickers) if r]
 
     out.sort(key=lambda r: abs(r["pct"]), reverse=True)
     top = out[:3]
