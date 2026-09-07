@@ -32,6 +32,29 @@ E = html.escape
 D = "&#36;"          # for markdown, where Streamlit reads bare $ as LaTeX
 DH = "$"            # plain markdown only; HTML blocks must use D
 
+def go_home():
+    """Clear every page and return to the search screen.
+
+    Streamlit keeps widget values across reruns, so leaving the search box
+    populated would immediately re-run the search and land the reader back on
+    a results list. Clearing the widget key is what makes this work.
+    """
+    for k in ("cik", "ticker", "name", "fund", "step", "searched", "mode",
+              "quiz", "quiz_round", "quiz_seed", "quiz_seen", "search_box"):
+        st.session_state.pop(k, None)
+    for k in [k for k in st.session_state
+              if k.startswith(("quiz_", "gl_", "hit_", "added_", "addseen_",
+                               "addbox_", "cmp_", "rm_", "add_"))]:
+        st.session_state.pop(k, None)
+    st.rerun()
+
+
+def home_button(key: str):
+    """A home link at the top of a page, reachable without scrolling."""
+    if st.button("← Home", key=key):
+        go_home()
+
+
 BYLINE = (
     '<p class="byline">Built by '
     '<a href="https://www.linkedin.com/in/achyutha-sharma-74a94634a/" '
@@ -1177,7 +1200,8 @@ MARKET = [
     ("GLD", "Gold ETF", "physical gold held in a vault"),
 ]
 
-query = st.text_input("Company name or ticker", placeholder="Search").strip()
+query = st.text_input("Company name or ticker", placeholder="Search",
+                      key="search_box").strip()
 
 if "cik" not in st.session_state and not query and prices.configured:
     mkt = []
@@ -1231,6 +1255,7 @@ if st.session_state.get("fund"):
                      f'{"▲" if fq.day_change_pct >= 0 else "▼"} '
                      f'{abs(fq.day_change_pct):.2f}% today</span>')
 
+    home_button("home_fund")
     st.markdown(f'<span class="tk">{E(fd.ticker)}</span>'
                 f'<h2 class="co">{E(fd.name)}{day_badge}</h2>'
                 f'<p class="one">{E(fd.one_line)}</p>', unsafe_allow_html=True)
@@ -1464,6 +1489,7 @@ if query:
     # a reader wants is often not the first hit -- "delta" reaches an airline
     # and an apparel maker -- so showing the alternatives costs one click and
     # saves guessing the precise name.
+    home_button("home_results")
     st.markdown(f'<p class="picker">{len(hits)} '
                 f'{"match" if len(hits) == 1 else "matches"}</p>', unsafe_allow_html=True)
     box = st.container()
@@ -1802,6 +1828,7 @@ if q.available and q.day_change_pct is not None:
     day = (f'<span class="day {tone}">{arrow} {abs(q.day_change_pct):.2f}% today</span>')
 
 
+home_button("home_company")
 st.markdown(f'<span class="tk">{E(ticker)}</span><h2 class="co">{E(eq.entity)}{day}</h2>'
             f'<p class="one">{E(prof.get("industry") or "")}'
             f'{" · " if prof.get("industry") else ""}CIK {E(cik)} · '
