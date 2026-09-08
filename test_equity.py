@@ -1089,6 +1089,87 @@ def test_period_ends_across_tags():
     print("period ends across tags ok")
 
 
+
+
+def test_news():
+    """Third-party headlines. Never required, never trusted blindly."""
+    import json as _json
+    import pathlib, tempfile
+    from prices import PriceClient
+
+    tmp = pathlib.Path(tempfile.mkdtemp())
+
+    # Not configured: nothing, and no exception. News is decoration on a page
+    # built from filings, so its absence must never matter.
+    assert PriceClient(api_key="", cache_dir=tmp).news("TSLA") == []
+    assert PriceClient(api_key="x", cache_dir=tmp).news("") == []
+
+    (tmp / "n_TSLA.json").write_text(_json.dumps([
+        {"headline": "Deliveries fall short of estimates", "source": "Reuters",
+         "url": "https://example.com/1", "when": "2026-09-02"},
+        {"headline": "Analysts trim targets", "source": "Barrons",
+         "url": "https://example.com/2", "when": "2026-09-01"},
+        # Rows with no headline or no link cannot be shown at all.
+        {"source": "Broken", "url": "https://example.com/3"},
+        {"headline": "No link here", "source": "Broken"},
+    ]))
+    got = PriceClient(api_key="x", cache_dir=tmp).news("TSLA")
+    assert len(got) == 2, got
+    assert all(r["headline"] and r["url"] for r in got)
+    assert got[0]["when"] >= got[1]["when"], "newest first"
+
+    # The limit holds, so a busy day cannot flood a card.
+    assert len(PriceClient(api_key="x", cache_dir=tmp).news("TSLA", limit=1)) == 1
+
+    # A cache written by older code must not crash the page.
+    (tmp / "n_BAD.json").write_text(_json.dumps("not a list"))
+    assert PriceClient(api_key="x", cache_dir=tmp).news("BAD") == []
+    print("news ok")
+
+
+
+
+def test_rate_pacing():
+    """Requests must be paced against the feed's per-minute allowance.
+
+    A widened movers watchlist spent the whole minute's budget on the home
+    page, and the company page the reader actually asked for came back rate
+    limited with no price at all.
+    """
+    import time
+    from prices import PriceClient
+
+    old_limit, old_window = PriceClient.RATE_LIMIT, PriceClient.RATE_WINDOW
+    old_recent = list(PriceClient._recent)
+    try:
+        PriceClient.RATE_LIMIT = 5
+        PriceClient.RATE_WINDOW = 1.0
+        PriceClient._recent.clear()
+
+        # Inside the allowance, nothing waits.
+        t0 = time.time()
+        for _ in range(5):
+            PriceClient._pace()
+        assert time.time() - t0 < 0.5, "should not block under the limit"
+
+        # Beyond it, the next request waits for the window to roll.
+        t1 = time.time()
+        PriceClient._pace()
+        assert time.time() - t1 > 0.4, "must wait once the allowance is spent"
+
+        # The window clears, so a later burst is not penalised forever.
+        time.sleep(1.05)
+        t2 = time.time()
+        PriceClient._pace()
+        assert time.time() - t2 < 0.5, "old requests must age out of the window"
+    finally:
+        PriceClient.RATE_LIMIT, PriceClient.RATE_WINDOW = old_limit, old_window
+        PriceClient._recent[:] = old_recent
+
+    assert PriceClient.RATE_LIMIT < 60, "must stay under the documented ceiling"
+    print("rate pacing ok")
+
+
 def main():
     test_clean()
     test_valuation()
@@ -1099,6 +1180,8 @@ def main():
     test_prices()
     test_history()
     test_surprises()
+    test_news()
+    test_rate_pacing()
     test_filing_text()
     test_risk_junk_rejected()
     test_span_picks_real_section()
