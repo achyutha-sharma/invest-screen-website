@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 QUOTE_URL = "https://finnhub.io/api/v1/quote"
@@ -30,6 +31,10 @@ TIINGO_URL = "https://api.tiingo.com/tiingo/daily/{sym}/prices"
 # What analysts expected, against what was reported. Not a filing, and the app
 # labels it as such -- estimates are opinions, and companies manage them.
 EARNINGS_URL = "https://finnhub.io/api/v1/stock/earnings"
+# Headlines around a date. Third-party reporting, not a filing, and the page
+# labels it that way -- a story published near a move is not proof it caused
+# the move.
+NEWS_URL = "https://finnhub.io/api/v1/company-news"
 
 CACHE_DIR = Path(os.environ.get("PRICE_CACHE_DIR", Path.home() / ".price_cache"))
 QUOTE_TTL = 10 * 60           # free-tier data is delayed anyway
@@ -122,6 +127,63 @@ class PriceClient:
             self._store(f"e_{sym}.json", out)
         return out[:limit]
 
+    def news(self, ticker: str, days: int = 4, limit: int = 4) -> list[dict]:
+        """Recent headlines for a company.
+
+        Only the headline, source and link are kept. The article text belongs
+        to whoever wrote it, so the page sends readers there rather than
+        reproducing it.
+        """
+        sym = (ticker or "").strip().upper()
+        if not sym or not self.key:
+            return []
+
+        cached = self._cached(f"n_{sym}.json", 1_800)      # half an hour
+        if isinstance(cached, list):
+            return [r for r in cached
+                    if isinstance(r, dict) and r.get("headline") and r.get("url")][:limit]
+
+        today = date.today()
+        try:
+            import requests
+
+            r = requests.get(
+                NEWS_URL,
+                params={"symbol": sym,
+                        "from": (today - timedelta(days=days)).isoformat(),
+                        "to": today.isoformat(),
+                        "token": self.key},
+                timeout=self.timeout)
+            if r.status_code != 200:
+                return []
+            data = r.json()
+        except Exception:
+            return []
+
+        if not isinstance(data, list):
+            return []
+
+        out, seen = [], set()
+        for row in data:
+            head = str(row.get("headline") or "").strip()
+            url = str(row.get("url") or "").strip()
+            if not head or not url or head.lower() in seen:
+                continue
+            seen.add(head.lower())
+            when = row.get("datetime")
+            out.append({
+                "headline": head[:160],
+                "source": str(row.get("source") or "").strip()[:40],
+                "url": url,
+                "when": (datetime.fromtimestamp(when).date().isoformat()
+                         if isinstance(when, (int, float)) and when else ""),
+            })
+
+        out.sort(key=lambda r: r["when"], reverse=True)
+        if out:
+            self._store(f"n_{sym}.json", out[:8])
+        return out[:limit]
+
     def next_estimate(self, ticker: str) -> dict | None:
         """The nearest quarter that has an estimate but no reported figure."""
         rows = [r for r in self.surprises(ticker, limit=12)
@@ -150,6 +212,28 @@ class PriceClient:
         except Exception:
             pass                              # a failed cache write is not an error
 
+    # Requests are paced against the feed's per-minute allowance. Without
+    # this, one page fetching a hundred quotes exhausted the budget and the
+    # next page -- the one the reader actually asked for -- was refused.
+    _lock = threading.Lock()
+    _recent: list[float] = []
+    RATE_LIMIT = 55                     # a little under the documented 60
+    RATE_WINDOW = 60.0
+
+    @classmethod
+    def _pace(cls) -> None:
+        """Block until another request fits inside the window."""
+        while True:
+            with cls._lock:
+                now = time.time()
+                cls._recent[:] = [t for t in cls._recent
+                                  if now - t < cls.RATE_WINDOW]
+                if len(cls._recent) < cls.RATE_LIMIT:
+                    cls._recent.append(now)
+                    return
+                wait = cls.RATE_WINDOW - (now - cls._recent[0]) + 0.05
+            time.sleep(min(wait, 2.0))
+
     def _get(self, url: str, params: dict):
         """Returns (json, problem). Never raises."""
         if not self.key:
@@ -157,6 +241,7 @@ class PriceClient:
         try:
             import requests
 
+            self._pace()
             r = requests.get(url, params={**params, "token": self.key},
                              timeout=self.timeout)
             if r.status_code == 401:
@@ -287,4 +372,3 @@ class PriceClient:
             if best is not None and gap is not None and gap <= 45:
                 out[label] = best
         return out
-        
