@@ -837,10 +837,15 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
   margin-top:.15rem}
 
 
-.summary p{margin:0 0 .65rem;font-size:.95rem;color:var(--text-2);line-height:1.68;
+.panel.summary{background:linear-gradient(180deg,rgba(169,139,255,.11),rgba(169,139,255,.05));
+  border:1px solid var(--acc-dim);border-left:3px solid var(--acc);
+  padding:1.15rem 1.3rem}
+.summary p{margin:0 0 .7rem;font-size:1rem;color:var(--text);line-height:1.7;
   max-width:72ch}
 .summary p:last-child{margin-bottom:0}
 .summary b{color:#FFFFFF;font-weight:700}
+@media (max-width:640px){.panel.summary{padding:.95rem 1rem}
+  .summary p{font-size:.93rem}}
 .onenews{background:var(--surf);border:1px solid var(--line);border-radius:9px;
   padding:.8rem .95rem;margin-top:.7rem}
 .onenews .k{display:block;font-size:.58rem;letter-spacing:.11em;text-transform:uppercase;
@@ -1336,34 +1341,27 @@ if st.session_state.get("fund"):
 WATCHLIST = [
     # Technology and semiconductors
     "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "AVGO", "ORCL",
-    "CRM", "ADBE", "AMD", "INTC", "QCOM", "TXN", "MU", "NOW",
-    "PANW", "CRWD", "SNOW", "DDOG", "SHOP", "UBER", "ABNB", "IBM",
-    "PLTR", "SMCI", "ARM", "DELL",
+    "CRM", "AMD", "INTC", "PLTR", "SMCI", "MU",
 
     # Financials
-    "JPM", "BAC", "WFC", "GS", "MS", "C", "V", "MA",
-    "AXP", "COF", "SCHW", "HOOD", "COIN", "BLK", "SPGI", "PGR",
+    "JPM", "BAC", "GS", "V", "MA", "AXP", "HOOD", "COIN",
 
     # Health care
-    "LLY", "JNJ", "UNH", "ABBV", "MRK", "PFE", "TMO", "ABT",
-    "AMGN", "BMY", "MRNA", "ISRG", "SYK", "CVS", "MDT", "DXCM",
+    "LLY", "JNJ", "UNH", "PFE", "MRNA", "ABBV",
 
     # Consumer
-    "WMT", "COST", "HD", "LOW", "TGT", "NKE", "LULU", "SBUX",
-    "MCD", "CMG", "KO", "PEP", "PG", "DIS", "NFLX", "BKNG",
-    "TSLA", "GM", "F", "DECK", "ULTA", "TJX", "DG", "YUM",
+    "WMT", "COST", "HD", "TGT", "NKE", "LULU", "SBUX", "MCD",
+    "KO", "DIS", "NFLX", "TSLA", "F", "ULTA",
 
-    # Industrials, energy and materials
-    "CAT", "DE", "BA", "LMT", "RTX", "GE", "HON", "UPS",
-    "UNP", "XOM", "CVX", "COP", "NEE", "DUK", "SO", "FCX",
-    "NUE", "LIN", "DOW", "SHW",
+    # Industrials, energy and property
+    "CAT", "BA", "GE", "UNP", "XOM", "CVX", "NEE", "AMT",
 
-    # Communications and property
-    "T", "VZ", "TMUS", "CMCSA", "AMT", "PLD", "EQIX", "SPG",
+    # Communications
+    "T", "VZ", "TMUS", "CMCSA",
 ]
 
 
-@st.cache_data(show_spinner=False, ttl=900)
+@st.cache_data(show_spinner=False, ttl=1_800)
 def biggest_moves(tickers: tuple, market_pct: float | None):
     """Watchlist quotes ranked by absolute move, with a filing check.
 
@@ -1385,7 +1383,7 @@ def biggest_moves(tickers: tuple, market_pct: float | None):
             return None
         return {"ticker": tk, "price": qt.price, "pct": qt.day_change_pct}
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         out = [r for r in pool.map(one, tickers) if r]
 
     out.sort(key=lambda r: abs(r["pct"]), reverse=True)
@@ -2357,94 +2355,6 @@ if have:
 # keeping more of each sale; where it lags, costs or the share count are
 # growing faster than the business.
 
-if len(px_series) >= 12:
-    sh("Share price", f"{px_series[0][0][:4]} to {px_series[-1][0][:4]}")
-    price_chart(px_series, eq.entity)
-
-rev_hist = eq.series("revenue")
-eps_hist = eq.series("eps")
-if len(rev_hist) >= 3 and len(eps_hist) >= 3:
-    sh("Trend", f"{rev_hist[0][0]} to {rev_hist[-1][0]}")
-    W, H, L, R, T, B = 780, 210, 38, 12, 14, 26
-
-    def indexed(series):
-        base = series[0][1]
-        return [100 * v / base for _, v in series] if base else []
-
-    ri, ei = indexed(rev_hist), indexed(eps_hist)
-    allv = [v for v in ri + ei if v is not None]
-    lo, hi = min(allv + [100]), max(allv)
-    pad = (hi - lo) * 0.10 or 10
-    y0, y1 = lo - pad, hi + pad
-
-    def X(i, n):
-        return L + (i / max(n - 1, 1)) * (W - L - R)
-
-    def Y(v):
-        return T + (1 - (v - y0) / (y1 - y0)) * (H - T - B)
-
-    def path(a):
-        return " ".join(f"{'L' if i else 'M'}{X(i, len(a)):.1f},{Y(v):.1f}"
-                        for i, v in enumerate(a))
-
-    grid = ""
-    for g in range(4):
-        v = y0 + (y1 - y0) * g / 3
-        y = Y(v)
-        grid += (f'<line x1="{L}" y1="{y:.1f}" x2="{W - R}" y2="{y:.1f}" stroke="#332B60"/>'
-                 f'<text x="{L - 7}" y="{y + 3.5:.1f}" text-anchor="end" '
-                 'font-family="IBM Plex Mono,monospace" font-size="9" font-weight="600" '
-                 f'fill="#7F779E">{v:.0f}</text>')
-
-    labels = ""
-    step = max(len(rev_hist) // 5, 1)
-    for i, (lab, _) in enumerate(rev_hist):
-        if i % step == 0 or i == len(rev_hist) - 1:
-            labels += (f'<text x="{X(i, len(rev_hist)):.1f}" y="{H - 8}" text-anchor="middle" '
-                       'font-family="IBM Plex Mono,monospace" font-size="9" font-weight="600" '
-                       f"fill=\"#7F779E\">&#39;{E(lab[-2:])}</text>")
-
-    dots = (f'<circle cx="{X(len(ri) - 1, len(ri)):.1f}" cy="{Y(ri[-1]):.1f}" r="3.6" '
-            'fill="#A98BFF"/>'
-            f'<circle cx="{X(len(ei) - 1, len(ei)):.1f}" cy="{Y(ei[-1]):.1f}" r="3.2" '
-            'fill="#5FD69B"/>')
-
-    st.markdown(f'''<div class="panel chart">
-      <div class="ckey"><span><i class="ln" style="background:#A98BFF"></i>revenue</span>
-        <span><i class="ln" style="background:#5FD69B"></i>profit per share</span></div>
-      <svg viewBox="0 0 {W} {H}" role="img"
-           aria-label="Revenue and profit per share since {E(rev_hist[0][0])}, both indexed to 100">
-        {grid}
-        <path d="{path(ei)}" fill="none" stroke="#5FD69B" stroke-width="2.2"
-          stroke-linejoin="round" stroke-linecap="round"/>
-        <path d="{path(ri)}" fill="none" stroke="#A98BFF" stroke-width="2.6"
-          stroke-linejoin="round" stroke-linecap="round"/>
-        {dots}{labels}
-      </svg></div>''', unsafe_allow_html=True)
-    # What the two lines actually did, in two sentences.
-    rev_chg = ri[-1] - 100
-    eps_chg = ei[-1] - 100
-    years_span = len(rev_hist) - 1
-
-    def moved(pct):
-        return f"{'up' if pct >= 0 else 'down'} {abs(pct):,.0f}%"
-
-    if eps_chg > rev_chg + 5:
-        verdict = ("Profit per share grew faster than revenue, so the company is keeping "
-                   "more of each dollar it sells than it used to.")
-    elif rev_chg > eps_chg + 5:
-        verdict = ("Revenue grew faster than profit per share, so costs or the number of "
-                   "shares are rising faster than the business.")
-    else:
-        verdict = ("The two moved together, so profit has grown roughly in line with the "
-                   "size of the business.")
-
-    st.markdown(
-        f'<div class="readout"><p>Over {years_span} years revenue is '
-        f'<b>{moved(rev_chg)}</b> and profit per share is <b>{moved(eps_chg)}</b>.</p>'
-        f"<p>{verdict}</p></div>", unsafe_allow_html=True)
-    st.caption("Both lines start at 100 so they can be compared side by side.")
-
 # --------------------------------------------------------------------------
 # In short
 # --------------------------------------------------------------------------
@@ -2560,6 +2470,94 @@ if _news:
 
 st.caption("Assembled from the figures on this page. It describes what has been "
            "reported — it does not rate the company or predict the share price.")
+
+if len(px_series) >= 12:
+    sh("Share price", f"{px_series[0][0][:4]} to {px_series[-1][0][:4]}")
+    price_chart(px_series, eq.entity)
+
+rev_hist = eq.series("revenue")
+eps_hist = eq.series("eps")
+if len(rev_hist) >= 3 and len(eps_hist) >= 3:
+    sh("Trend", f"{rev_hist[0][0]} to {rev_hist[-1][0]}")
+    W, H, L, R, T, B = 780, 210, 38, 12, 14, 26
+
+    def indexed(series):
+        base = series[0][1]
+        return [100 * v / base for _, v in series] if base else []
+
+    ri, ei = indexed(rev_hist), indexed(eps_hist)
+    allv = [v for v in ri + ei if v is not None]
+    lo, hi = min(allv + [100]), max(allv)
+    pad = (hi - lo) * 0.10 or 10
+    y0, y1 = lo - pad, hi + pad
+
+    def X(i, n):
+        return L + (i / max(n - 1, 1)) * (W - L - R)
+
+    def Y(v):
+        return T + (1 - (v - y0) / (y1 - y0)) * (H - T - B)
+
+    def path(a):
+        return " ".join(f"{'L' if i else 'M'}{X(i, len(a)):.1f},{Y(v):.1f}"
+                        for i, v in enumerate(a))
+
+    grid = ""
+    for g in range(4):
+        v = y0 + (y1 - y0) * g / 3
+        y = Y(v)
+        grid += (f'<line x1="{L}" y1="{y:.1f}" x2="{W - R}" y2="{y:.1f}" stroke="#332B60"/>'
+                 f'<text x="{L - 7}" y="{y + 3.5:.1f}" text-anchor="end" '
+                 'font-family="IBM Plex Mono,monospace" font-size="9" font-weight="600" '
+                 f'fill="#7F779E">{v:.0f}</text>')
+
+    labels = ""
+    step = max(len(rev_hist) // 5, 1)
+    for i, (lab, _) in enumerate(rev_hist):
+        if i % step == 0 or i == len(rev_hist) - 1:
+            labels += (f'<text x="{X(i, len(rev_hist)):.1f}" y="{H - 8}" text-anchor="middle" '
+                       'font-family="IBM Plex Mono,monospace" font-size="9" font-weight="600" '
+                       f"fill=\"#7F779E\">&#39;{E(lab[-2:])}</text>")
+
+    dots = (f'<circle cx="{X(len(ri) - 1, len(ri)):.1f}" cy="{Y(ri[-1]):.1f}" r="3.6" '
+            'fill="#A98BFF"/>'
+            f'<circle cx="{X(len(ei) - 1, len(ei)):.1f}" cy="{Y(ei[-1]):.1f}" r="3.2" '
+            'fill="#5FD69B"/>')
+
+    st.markdown(f'''<div class="panel chart">
+      <div class="ckey"><span><i class="ln" style="background:#A98BFF"></i>revenue</span>
+        <span><i class="ln" style="background:#5FD69B"></i>profit per share</span></div>
+      <svg viewBox="0 0 {W} {H}" role="img"
+           aria-label="Revenue and profit per share since {E(rev_hist[0][0])}, both indexed to 100">
+        {grid}
+        <path d="{path(ei)}" fill="none" stroke="#5FD69B" stroke-width="2.2"
+          stroke-linejoin="round" stroke-linecap="round"/>
+        <path d="{path(ri)}" fill="none" stroke="#A98BFF" stroke-width="2.6"
+          stroke-linejoin="round" stroke-linecap="round"/>
+        {dots}{labels}
+      </svg></div>''', unsafe_allow_html=True)
+    # What the two lines actually did, in two sentences.
+    rev_chg = ri[-1] - 100
+    eps_chg = ei[-1] - 100
+    years_span = len(rev_hist) - 1
+
+    def moved(pct):
+        return f"{'up' if pct >= 0 else 'down'} {abs(pct):,.0f}%"
+
+    if eps_chg > rev_chg + 5:
+        verdict = ("Profit per share grew faster than revenue, so the company is keeping "
+                   "more of each dollar it sells than it used to.")
+    elif rev_chg > eps_chg + 5:
+        verdict = ("Revenue grew faster than profit per share, so costs or the number of "
+                   "shares are rising faster than the business.")
+    else:
+        verdict = ("The two moved together, so profit has grown roughly in line with the "
+                   "size of the business.")
+
+    st.markdown(
+        f'<div class="readout"><p>Over {years_span} years revenue is '
+        f'<b>{moved(rev_chg)}</b> and profit per share is <b>{moved(eps_chg)}</b>.</p>'
+        f"<p>{verdict}</p></div>", unsafe_allow_html=True)
+    st.caption("Both lines start at 100 so they can be compared side by side.")
 
 # --------------------------------------------------------------------------
 # 03 this year so far
