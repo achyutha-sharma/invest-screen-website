@@ -2219,6 +2219,15 @@ if mode == "Teach me":
                 "anything.</p>" + BYLINE, unsafe_allow_html=True)
     st.stop()
 
+# Cash left after capital spending, and how much of reported profit it
+# represents. The ratio is the interesting part: profit is a judgement, cash
+# is not, and a long gap between them is worth noticing.
+_ocf_s, _capex_s = latest.get("ocf"), latest.get("capex")
+_strip_fcf = None if (_ocf_s is None or _capex_s is None) else _ocf_s - _capex_s
+_ni_s2 = latest.get("net_income")
+_conv = (_strip_fcf / _ni_s2
+         if (_strip_fcf is not None and _ni_s2 and _ni_s2 > 0) else None)
+
 strip = [
     ("Share price",
      (f"{D}{q.price:,.2f}" if q.available else "no feed") + price_spark,
@@ -2236,6 +2245,17 @@ strip = [
     ("Net margin", f"{margin:,.2f}%" if margin is not None else "—",
      "good" if margin and margin > 15 else "watch" if margin and margin > 7 else "weak",
      "net profit margin — kept from every " + D + "100 of sales", "margin"),
+    ("Free cash flow",
+     money(_strip_fcf) if _strip_fcf is not None else "—",
+     ("weak" if _strip_fcf is not None and _strip_fcf < 0
+      else "good" if _conv is not None and _conv >= 0.9
+      else "watch" if _conv is not None and _conv < 0.7 else ""),
+     ("cash left after running the business"
+      # Only stated when it is a ratio worth reading: a negative one is
+      # already obvious from the figure being negative.
+      + (f" — {D}{_conv:,.2f} for every {D}1 of reported profit"
+         if _conv is not None and _conv > 0 else "")),
+     "fcf"),
 ]
 # Each box is a button carrying its whole label, so the entire card is
 # clickable and the glossary link cannot drift away from it on a narrow
