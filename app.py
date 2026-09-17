@@ -17,6 +17,7 @@ from datetime import date
 
 import expectations as expect
 from filing_text import latest_filings, read_filing
+import summary as summ
 from peers import suggest
 import funds as funds_data
 from prices import PriceClient
@@ -879,6 +880,15 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 .qbeat .d{display:block;font-family:var(--mono);font-size:.78rem;font-weight:700}
 .qbeat.good .d{color:var(--up)} .qbeat.weak .d{color:var(--down)}
 
+
+.narrate h4{margin:0 0 .55rem;font-size:.7rem;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--acc);font-weight:700}
+.narrate p{margin:0 0 .6rem;font-size:.95rem;color:var(--text-2);line-height:1.7;
+  max-width:72ch}
+.narrate p:last-child{margin-bottom:0}
+.narrate b{color:#FFFFFF;font-weight:700}
+.panel.narrate{margin-bottom:.7rem}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -1333,6 +1343,23 @@ if st.session_state.get("fund"):
         st.caption("The fee is taken out of the fund's value daily, so it never appears "
                    "as a charge you pay — it simply lowers the return. Over decades it "
                    "is the one cost a holder can control.")
+
+    _fshape = summ.shape(hist) if "hist" in dir() else None
+    if _fshape is None:
+        _fshape = summ.shape(prices.monthly(fd.ticker) if prices.has_history else [])
+    _flines = summ.price_sentences(
+        fd.name, _fshape,
+        fq.price if fq.available else None,
+        fq.day_change_pct if fq.available else None,
+        money=lambda v: f"{D}{v:,.2f}")
+    if _flines:
+        sh("How it has behaved", "in plain terms")
+        st.markdown('<div class="panel narrate">'
+                    + "".join(f"<p>{l}</p>" for l in _flines)
+                    + "</div>", unsafe_allow_html=True)
+        st.caption("Arithmetic on month-end prices. A fund's falls matter as much as "
+                   "its average — the average is only what you get for sitting "
+                   "through them.")
 
     sh("What this actually is")
     st.markdown(f'<div class="panel"><p class="fbody">{E(fd.what)}</p></div>',
@@ -1928,7 +1955,7 @@ st.markdown(f'<span class="tk">{E(ticker)}</span><h2 class="co">{E(eq.entity)}{d
             f'{E(latest.label)} (year ended {E(latest.end.strftime("%b %Y"))}) '
             "· Form 10-K</p>", unsafe_allow_html=True)
 
-_views = ["Research", "Compare", "Teach me"]
+_views = ["Research", "Summary", "Compare", "Teach me"]
 # Looked up by name, not by position. This was a hard-coded 1, which meant
 # "Teach me" until Compare was added in the middle and the glossary link
 # started opening the wrong view.
@@ -1950,6 +1977,130 @@ mode = st.radio("View", _views, index=_want if _want is not None else 0,
 # Deliberately not labelled "high risk" or "safe" by us. The figures carry the
 # distinction; assigning the label would be a judgement about the reader's
 # situation, which no filing can support.
+
+# --------------------------------------------------------------------------
+# Summary
+# --------------------------------------------------------------------------
+# The whole page in sentences. Someone who does not want to read a table
+# should still be able to learn what this company is, how the shares have
+# behaved, and what the filings show -- without a rating being invented for
+# them.
+
+if mode == "Summary":
+    shape_ = summ.shape(px_series)
+
+    def para(lines, title=None):
+        if not lines:
+            return
+        head = f"<h4>{E(title)}</h4>" if title else ""
+        st.markdown(f'<div class="panel narrate">{head}'
+                    + "".join(f"<p>{l}</p>" for l in lines)
+                    + "</div>", unsafe_allow_html=True)
+
+    # ---- what it is ----
+    industry = prof.get("industry") or ""
+    intro = [f"<b>{E(eq.entity.split(',')[0].title())}</b> files with the SEC as a "
+             f"{E(industry.lower())} business." if industry else
+             f"<b>{E(eq.entity.split(',')[0].title())}</b> is a US-listed company."]
+    if latest.get("shares"):
+        intro.append(
+            f'It is divided into <b>{shares_text(latest.get("shares"))}</b> shares, '
+            "so "
+            "buying one makes you a part-owner of everything it owns and owes.")
+    para(intro, "What it is")
+
+    # ---- the share price ----
+    para(summ.price_sentences(
+        eq.entity.split(",")[0].title(), shape_,
+        q.price if q.available else None,
+        q.day_change_pct if q.available else None,
+        money=lambda v: f"{D}{v:,.2f}"), "How the shares have behaved")
+
+    # ---- the business ----
+    biz = []
+    rev_s, eps_s, ni_s = eq.series("revenue"), eq.series("eps"), eq.series("net_income")
+
+    def _yoy_s(series):
+        if len(series) >= 2 and series[-2][1] and series[-2][1] > 0:
+            return 100 * (series[-1][1] / series[-2][1] - 1)
+        return None
+
+    rg, eg = _yoy_s(rev_s), _yoy_s(eps_s)
+    if rev_s:
+        line = (f"Last year the company sold <b>{money(rev_s[-1][1])}</b> worth of "
+                "goods and services")
+        if rg is not None:
+            line += (f", <b>{'up' if rg >= 0 else 'down'} {abs(rg):,.1f}%</b> on the "
+                     "year before")
+        biz.append(line + ".")
+    if ni_s and rev_s and rev_s[-1][1]:
+        m = 100 * ni_s[-1][1] / rev_s[-1][1]
+        biz.append(f"Of every <b>{D}100</b> customers spent, about "
+                   f"<b>{D}{m:,.0f}</b> was left as profit after every cost.")
+    if rg is not None and eg is not None:
+        if eg > rg + 2:
+            biz.append("Profit per share grew faster than sales, which means the "
+                       "company is <b>keeping more of each dollar</b> than it used to "
+                       "— usually costs falling, or fewer shares outstanding.")
+        elif rg > eg + 2:
+            biz.append("Sales grew faster than profit per share, which means "
+                       "<b>costs or the share count are rising faster than the "
+                       "business</b>. Worth knowing which.")
+    para(biz, "What the business did")
+
+    # ---- cash and debt ----
+    cashline = []
+    _o, _c = latest.get("ocf"), latest.get("capex")
+    _f = None if (_o is None or _c is None) else _o - _c
+    _n = latest.get("net_income")
+    if _f is not None and _n:
+        if _f < 0:
+            cashline.append(
+                f"It reported a profit of <b>{money(_n)}</b> but spent more cash than "
+                f"it took in, leaving <b>{money(_f)}</b> of free cash flow. "
+                "<b>Profit is an opinion; cash is a fact.</b>")
+        else:
+            conv = _f / _n if _n > 0 else None
+            cashline.append(
+                f"Reported profit was <b>{money(_n)}</b> and real spare cash after "
+                f"capital spending was <b>{money(_f)}</b>"
+                + (f" — <b>{D}{conv:,.2f}</b> of cash for every <b>{D}1</b> of profit."
+                   if conv else "."))
+    _d, _ca = latest.get("total_debt"), latest.get("cash")
+    if _d is not None:
+        net = _d - (_ca or 0)
+        if net <= 0:
+            cashline.append("It holds <b>more cash than debt</b>, so borrowings are "
+                            "not a pressure on it.")
+        elif _f and _f > 0:
+            cashline.append(
+                f"Net borrowings are <b>{money(net)}</b>, about "
+                f"<b>{net / _f:,.1f} years</b> of free cash flow. Lenders are paid "
+                "before shareholders, so that figure decides how much room the "
+                "company has in a bad year.")
+    para(cashline, "Cash and debt")
+
+    # ---- this year ----
+    if eq.quarters:
+        qs = sorted({x.fp for x in eq.quarters})
+        latest_q = eq.quarters[-1]
+        yr = [f"<b>{len(qs)} of 4</b> quarters of the current year have been filed."]
+        ch = latest_q.change("revenue")
+        if ch is not None:
+            yr.append(f"The most recent, ending "
+                      f"<b>{E(latest_q.end.strftime('%B %Y'))}</b>, had sales "
+                      f"<b>{'up' if ch >= 0 else 'down'} {abs(ch):,.1f}%</b> against "
+                      "the same quarter a year earlier.")
+        para(yr, "This year so far")
+
+    st.caption("Assembled from SEC filings and a market price feed. It describes what "
+               "has happened — it does not rate the company, predict the share price, "
+               "or tell you what to do.")
+
+    st.markdown('<p class="disc">Figures come from SEC filings; share prices come from '
+                "a market feed. Educational research only — not advice.</p>" + BYLINE,
+                unsafe_allow_html=True)
+    st.stop()
 
 if mode == "Compare":
     peer_tickers, (why_kind, why_peers) = suggest(
@@ -2426,122 +2577,6 @@ if have:
 # but whether they move together. Where EPS outpaces revenue the company is
 # keeping more of each sale; where it lags, costs or the share count are
 # growing faster than the business.
-
-# --------------------------------------------------------------------------
-# In short
-# --------------------------------------------------------------------------
-# A written summary in place of a score. A single rating implied a verdict the
-# filings cannot support; describing what actually happened is both more
-# useful and more defensible. Every sentence below is assembled from figures
-# already on this page.
-
-sh("In short", "what the filings say")
-
-_rev = eq.series("revenue")
-_eps_s = eq.series("eps")
-_ni_s = eq.series("net_income")
-
-
-def _yoy(series):
-    if len(series) >= 2 and series[-2][1] and series[-2][1] > 0:
-        return 100 * (series[-1][1] / series[-2][1] - 1)
-    return None
-
-
-def _phrase(pct, up_word, down_word, flat="held roughly flat"):
-    if pct is None:
-        return None
-    if abs(pct) < 1:
-        return flat
-    return f"{up_word if pct > 0 else down_word} {abs(pct):,.1f}%"
-
-
-bits = []
-
-# 1. The share, today and over the period there is history for.
-if q.available and q.day_change_pct is not None:
-    move = ("rose" if q.day_change_pct >= 0 else "fell")
-    line = (f'The share {move} <b>{abs(q.day_change_pct):.2f}%</b> today to '
-            f'<b>{D}{q.price:,.2f}</b>')
-    if len(px_series) >= 24:
-        cagr = annualised(px_series)
-        if cagr is not None:
-            yrs = max(round(len(px_series[-120:]) / 12), 1)
-            line += (f', and has compounded at <b>{cagr:+,.1f}% a year</b> over about '
-                     f'{yrs} years')
-    bits.append(line + ".")
-
-# 2. What the business did last year.
-_rg, _eg = _yoy(_rev), _yoy(_eps_s)
-sales_bit = _phrase(_rg, "grew", "fell")
-eps_bit = _phrase(_eg, "grew", "fell")
-if sales_bit and eps_bit:
-    if _rg is not None and _eg is not None and _eg > _rg + 2:
-        tail = " — profit per share outpaced sales, so more of each dollar is being kept"
-    elif _rg is not None and _eg is not None and _rg > _eg + 2:
-        tail = (" — sales outpaced profit per share, so costs or the share count are "
-                "growing faster than the business")
-    else:
-        tail = ""
-    bits.append(f"Last year sales <b>{sales_bit}</b> and profit per share "
-                f"<b>{eps_bit}</b>{tail}.")
-elif sales_bit:
-    bits.append(f"Last year sales <b>{sales_bit}</b>.")
-
-# 3. The one thing from the filings most worth knowing. Ordered by how much
-#    it would change a reader's picture, and only ever one.
-_l = latest
-_ocf, _capex = _l.get("ocf"), _l.get("capex")
-_fcf = None if (_ocf is None or _capex is None) else _ocf - _capex
-_ni = _l.get("net_income")
-_debt, _cash = _l.get("total_debt"), _l.get("cash")
-
-note = None
-if _fcf is not None and _ni and _ni > 0 and _fcf < 0:
-    note = (f"The company reported a profit of <b>{money(_ni)}</b> but spent more cash "
-            f"than it took in, leaving free cash flow of <b>{money(_fcf)}</b>.")
-elif _fcf is not None and _ni and _ni > 0 and _fcf < _ni * 0.7:
-    note = (f"Reported profit of <b>{money(_ni)}</b> came with only <b>{money(_fcf)}</b> "
-            "of spare cash — worth checking why the two differ.")
-elif _debt is not None and _fcf and _fcf > 0 and (_debt - (_cash or 0)) > _fcf * 4:
-    net = _debt - (_cash or 0)
-    bits_years = net / _fcf
-    note = (f"Net borrowings of <b>{money(net)}</b> are about "
-            f"<b>{bits_years:,.1f} years</b> of free cash flow.")
-elif margin is not None and len(_ni_s) >= 4 and _rev:
-    old = next((100 * n / r for (ly, n), (ry, r) in
-                zip(_ni_s[-4:], _rev[-4:]) if r), None)
-    if old is not None and margin < old - 2:
-        note = (f"Net margin is <b>{margin:,.1f}%</b>, down from <b>{old:,.1f}%</b> "
-                "three years ago.")
-    elif old is not None and margin > old + 2:
-        note = (f"Net margin is <b>{margin:,.1f}%</b>, up from <b>{old:,.1f}%</b> "
-                "three years ago.")
-if note:
-    bits.append(note)
-
-if bits:
-    st.markdown('<div class="panel summary">'
-                + "".join(f"<p>{b}</p>" for b in bits)
-                + "</div>", unsafe_allow_html=True)
-
-# 4. One recent headline, as somewhere to go and read. Not summarised, and
-#    not presented as the reason for anything above.
-_news = headlines(ticker)[:1]
-if _news:
-    n0 = _news[0]
-    st.markdown(
-        '<div class="onenews"><span class="k">Recent coverage</span>'
-        f'<a href="{E(n0["url"])}" target="_blank" rel="noopener">'
-        f'{E(n0["headline"])}</a>'
-        f'<span class="s">{E(n0["source"])}'
-        + (f' · {E(n0["when"])}' if n0.get("when") else "")
-        + "</span></div>", unsafe_allow_html=True)
-    st.caption("A recent story about this company, from a news feed rather than a "
-               "filing. It is here to read, not as an explanation of the figures above.")
-
-st.caption("Assembled from the figures on this page. It describes what has been "
-           "reported — it does not rate the company or predict the share price.")
 
 if len(px_series) >= 12:
     sh("Share price", f"{px_series[0][0][:4]} to {px_series[-1][0][:4]}")
