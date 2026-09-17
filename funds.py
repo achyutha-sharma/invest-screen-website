@@ -364,6 +364,104 @@ FUNDS: dict[str, Fund] = {
         cost_note="<b>{D}3 a year on every {D}10,000 invested.</b>",
         checked="September 2026",
     ),
+
+    "NLR": Fund(
+        ticker="NLR",
+        name="VanEck Uranium and Nuclear ETF",
+        one_line="uranium miners and the companies that run nuclear plants",
+        what=(
+            "A fund holding companies across the nuclear chain: miners that dig uranium "
+            "out of the ground, utilities that operate reactors, and the industrial "
+            "firms that build and service them. Roughly half energy, a quarter "
+            "utilities, the rest industrial — so it is two quite different businesses "
+            "in one holding."
+        ),
+        moves_up=[
+            "Governments commit to new reactors, or extend the life of existing ones",
+            "Electricity demand rises faster than supply — data centres are the current "
+            "reason",
+            "The uranium price rises, which flows straight to the miners",
+        ],
+        moves_down=[
+            "A nuclear accident anywhere in the world, which historically reprices the "
+            "whole sector regardless of where it happened",
+            "Reactor projects are delayed or cancelled — they run to decades, not years",
+            "The uranium price falls, or new supply arrives",
+        ],
+        why=(
+            "It is the most direct way to hold the nuclear story in one line. The two "
+            "halves behave differently: utilities are steady and regulated, miners swing "
+            "with a commodity price."
+        ),
+        watch_out=(
+            "This is a **concentrated sector bet**, not a diversified holding. It has "
+            "fallen sharply in years when the wider market rose, and a single political "
+            "decision in one country can move it. The fee is also six to fifteen times "
+            "what a broad index fund charges."
+        ),
+        long_run="highly variable, with long flat stretches",
+        long_run_note=(
+            "Nuclear went nearly nowhere for the decade after Fukushima in 2011, then "
+            "rose sharply as power demand and policy turned. <b>A theme can be correct "
+            "and still take fifteen years to pay</b>, which is the risk in any sector "
+            "fund built on one idea."
+        ),
+        cost="0.52% a year",
+        cost_note=(
+            "<b>{D}52 a year on every {D}10,000 invested</b> — roughly seventeen times "
+            "what a broad index fund charges. Sector and theme funds cost more because "
+            "they are smaller and trade more; the fee is the price of the narrower bet."
+        ),
+        checked="September 2026",
+    ),
+
+    "XLF": Fund(
+        ticker="XLF",
+        name="Financial Select Sector SPDR",
+        one_line="the banks, insurers and payment companies in the S&P 500",
+        what=(
+            "A fund holding the financial companies within the S&P 500 — large banks, "
+            "insurers, asset managers, exchanges and payment networks. It is weighted by "
+            "size, so the biggest banks dominate. It holds no companies outside the "
+            "index, so smaller regional banks are largely absent."
+        ),
+        moves_up=[
+            "Interest rates rise, because banks earn more on the gap between what they "
+            "lend at and what they pay depositors",
+            "The economy looks strong, so fewer loans go bad",
+            "Regulation loosens, or capital requirements fall",
+        ],
+        moves_down=[
+            "A recession looks likelier — banks lose money when borrowers default",
+            "Interest rates fall sharply, compressing lending margins",
+            "A credit event: one bank failing tends to drag the whole sector, whether or "
+            "not the others are exposed",
+        ],
+        why=(
+            "Financials are the sector most directly tied to interest rates and the "
+            "credit cycle, so it often moves before the rest of the market does. Watching "
+            "it alongside the S&P shows whether a move is broad or rate-driven."
+        ),
+        watch_out=(
+            "Banks are leveraged by design — they operate on a thin layer of equity "
+            "beneath a large balance sheet. <b>That magnifies both directions</b>, and it "
+            "is why financials fall harder than most sectors in a crisis. 2008 and the "
+            "2023 regional bank failures are the reference points."
+        ),
+        long_run="broadly in line with the S&P, with deeper falls",
+        long_run_note=(
+            "Over long stretches financials have returned roughly what the index has, "
+            "but with worse drawdowns. The sector took more than a decade to recover its "
+            "2007 peak. <b>Similar average, much rougher path.</b>"
+        ),
+        cost="0.08% a year",
+        cost_note=(
+            "<b>{D}8 a year on every {D}10,000 invested.</b> Cheap for a sector fund — "
+            "the Select Sector SPDRs are index funds carved out of the S&P 500 rather "
+            "than actively chosen, which keeps the fee close to a broad index fund."
+        ),
+        checked="September 2026",
+    ),
 }
 
 
