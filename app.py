@@ -1278,7 +1278,8 @@ if "cik" not in st.session_state and not query and prices.configured:
                    "research — but they tell you whether a stock moved on its own news or "
                    "with everything else.")
 
-if query and st.session_state.get("fund"):
+if (query and st.session_state.get("fund")
+        and not funds_data.get(query.strip().upper())):
     st.session_state.pop("fund", None)
     st.session_state.pop("searched", None)
 
@@ -1321,6 +1322,16 @@ if st.session_state.get("fund"):
                     "</div>", unsafe_allow_html=True)
         st.caption("A long-run average, not a recent one — a single year swings far too "
                    "much to mean anything on its own.")
+
+    if fd.cost:
+        sh("What it costs", f"checked {fd.checked}" if fd.checked else "")
+        st.markdown(
+            f'<div class="panel"><span class="big">{E(fd.cost)}</span>'
+            f'<p class="fbody" style="margin-top:.6rem">{fd.cost_note.replace("{D}", D)}'
+            "</p></div>", unsafe_allow_html=True)
+        st.caption("The fee is taken out of the fund's value daily, so it never appears "
+                   "as a charge you pay — it simply lowers the return. Over decades it "
+                   "is the one cost a holder can control.")
 
     sh("What this actually is")
     st.markdown(f'<div class="panel"><p class="fbody">{E(fd.what)}</p></div>',
@@ -1538,6 +1549,17 @@ if "cik" not in st.session_state and not query and prices.configured:
 # this any click on an open page would bounce back to the results.
 if query and query == st.session_state.get("searched"):
     query = ""
+
+# A known fund is opened directly. Searching VOO used to reach the SEC, find
+# no financial statements, and stop -- which is technically correct and
+# completely unhelpful when the app has a page for it.
+_asked = query.strip().upper() if query else ""
+if _asked and funds_data.get(_asked) and st.session_state.get("fund") != _asked:
+    st.session_state["fund"] = _asked
+    st.session_state["searched"] = query
+    for k in ("cik", "ticker", "name", "step"):
+        st.session_state.pop(k, None)
+    st.rerun()
 
 if query:
     try:
