@@ -855,6 +855,30 @@ div[data-testid="stVerticalBlock"]:has(.mktlinks) div[data-testid="stHorizontalB
 .onenews .s{display:block;font-family:var(--mono);font-size:.62rem;color:var(--text-3);
   margin-top:.3rem}
 
+
+/* one quarter at a time */
+.qtable{width:100%;border-collapse:collapse}
+.qtable th{font-size:.6rem;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--text-3);font-weight:700;padding:.5rem .7rem;text-align:right;
+  border-bottom:1px solid var(--line)}
+.qtable th:first-child{text-align:left;color:var(--acc)}
+.qtable td{padding:.7rem;border-bottom:1px solid var(--line);text-align:right}
+.qtable tr:last-child td{border-bottom:0}
+.qtable td.qlabel{text-align:left;font-size:.9rem;color:var(--text)}
+.qtable td.qval{font-family:var(--mono);font-size:1.02rem;font-weight:700;color:#FFFFFF}
+.qy{font-family:var(--mono);font-size:.85rem;font-weight:700}
+.qy.up{color:var(--up)} .qy.down{color:var(--down)} .qy.none{color:var(--text-3)}
+.qbeat{border-radius:9px;padding:.8rem .95rem;margin-top:.7rem;
+  border:1px solid var(--line)}
+.qbeat.good{background:rgba(95,214,155,.09);border-color:#22502F}
+.qbeat.weak{background:rgba(255,123,138,.08);border-color:#5A2A32}
+.qbeat .k{display:block;font-size:.58rem;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--text-3);font-weight:700}
+.qbeat .v{display:block;font-family:var(--mono);font-size:.95rem;font-weight:700;
+  color:#FFFFFF;margin:.25rem 0 .15rem}
+.qbeat .d{display:block;font-family:var(--mono);font-size:.78rem;font-weight:700}
+.qbeat.good .d{color:var(--up)} .qbeat.weak .d{color:var(--down)}
+
 /* streamlit widgets */
 .stTextInput input{background:var(--surf) !important;color:var(--text) !important;
   border:1px solid var(--line-2) !important;border-radius:8px !important;
@@ -1877,7 +1901,8 @@ home_button("home_company")
 st.markdown(f'<span class="tk">{E(ticker)}</span><h2 class="co">{E(eq.entity)}{day}</h2>'
             f'<p class="one">{E(prof.get("industry") or "")}'
             f'{" · " if prof.get("industry") else ""}CIK {E(cik)} · '
-            f'{E(latest.label)} · Form 10-K</p>', unsafe_allow_html=True)
+            f'{E(latest.label)} (year ended {E(latest.end.strftime("%b %Y"))}) '
+            "· Form 10-K</p>", unsafe_allow_html=True)
 
 _views = ["Research", "Compare", "Teach me"]
 # Looked up by name, not by position. This was a hard-coded 1, which meant
@@ -2281,7 +2306,7 @@ if st.button("What do these numbers mean? →", key="gloss_all",
 # 01 the numbers
 # --------------------------------------------------------------------------
 
-sh("The numbers", "last three years")
+sh("The numbers", f"three years to {latest.end.strftime('%b %Y')}")
 
 def series3(key):
     """The three most recent filed values, oldest first."""
@@ -2362,7 +2387,10 @@ if have:
                  f'{cells}<td class="tcol">{arrow(visible, better)}</td></tr>')
     st.markdown(f'<div class="panel"><table class="years"><thead>{head}</thead>'
                 f"<tbody>{body}</tbody></table></div>", unsafe_allow_html=True)
-    st.caption(f"Green is the direction you would rather see — for debt that means falling. "
+    st.caption(f"The most recent annual report covers the year ended "
+               f"{latest.end.strftime('%B %Y')}; the current year appears under "
+               "“This year so far”. "
+               f"Green is the direction you would rather see — for debt that means falling. "
                f"The last column is the change from {E(labels[0])} to {E(labels[-1])}, "
                f"which is {span} year{'s' if span != 1 else ''} of growth.")
 
@@ -2585,41 +2613,101 @@ if len(rev_hist) >= 3 and len(eps_hist) >= 3:
 
 if eq.quarters:
     _shown = len({qq.fp for qq in eq.quarters})
-    sh("This year so far",
+    sh("Quarterly results",
        f"{_shown} of 4 quarter{'s' if _shown != 1 else ''} filed")
-    ytd = sum(qq.get("revenue") for qq in eq.quarters if qq.get("revenue"))
-    run = ytd / len(eq.quarters) * 4
-    last_year = rev
-    cells = ""
-    # Keyed by the actual fiscal quarter, not by position. A company whose
-    # first quarter is missing from the data would otherwise show its second
-    # quarter in the Q1 slot.
-    by_q = {qq.fp: qq for qq in eq.quarters}
-    for i in range(1, 5):
-        qq = by_q.get(f"Q{i}")
-        if qq is not None:
-            chg = qq.change("revenue")
-            tone = "" if chg is None else ("up" if chg >= 0 else "down")
-            cells += (f'<div class="qc"><span class="ql">{qq.fp}</span>'
-                      f'<span class="qv {tone}">{money(qq.get("revenue"))}</span>'
-                      + (f'<span class="qs {tone}">'
-                         f'{"▲" if chg >= 0 else "▼"}{abs(chg):,.1f}% on {qq.fp} last year'
-                         "</span>" if chg is not None else
-                         '<span class="qs">no year-ago figure filed</span>')
-                      + "</div>")
-        else:
-            cells += ('<div class="qc pending"><span class="ql">'
-                      f'Q{i}</span><span class="qv">—</span>'
-                      '<span class="qs">not filed yet</span></div>')
 
-    rr = ""
-    if last_year:
-        chg = 100 * (run / last_year - 1)
-        rr = (f'<div class="runrate"><span>At this pace the year lands near '
-              f'<b>{money(run)}</b> against <b>{money(last_year)}</b> last year — '
-              f'<b>{pct(chg)}</b>. <span style="color:var(--text-3)">Arithmetic on the '
-              "quarters filed, not a forecast.</span></span></div>")
-    st.markdown(f'<div class="panel"><div class="qrow">{cells}</div>{rr}</div>',
+    by_q = {qq.fp: qq for qq in eq.quarters}
+    filed = [f"Q{i}" for i in range(1, 5) if f"Q{i}" in by_q]
+
+    # One quarter at a time, chosen by the reader. Four quarters side by side
+    # fitted a headline figure each; one at a time fits the whole picture --
+    # revenue, profit, margin and what analysts had expected.
+    pick = st.radio("Quarter", filed, index=len(filed) - 1,
+                    horizontal=True, label_visibility="collapsed",
+                    key=f"qsel_{cik}")
+    qq = by_q[pick]
+
+    # Estimates are keyed by period end date, so a quarter is matched to its
+    # estimate by date rather than by the filer's own fiscal numbering, which
+    # runs ahead of the calendar for anyone whose year does not end in December.
+    est = None
+    for r in surprises(ticker):
+        if r.get("actual") is None or not r.get("period"):
+            continue
+        try:
+            gap = abs((date.fromisoformat(r["period"][:10]) - qq.end).days)
+        except Exception:
+            continue
+        if gap <= 20:
+            est = r
+            break
+
+    q_rev = qq.get("revenue")
+    q_ni = qq.get("net_income")
+    q_eps = qq.get("eps")
+    q_margin = (100 * q_ni / q_rev) if (q_ni is not None and q_rev) else None
+    ya_rev = qq.year_ago.get("revenue")
+    ya_ni = qq.year_ago.get("net_income")
+    ya_margin = (100 * ya_ni / ya_rev) if (ya_ni is not None and ya_rev) else None
+
+    def yoy_cell(pct_change):
+        if pct_change is None:
+            return '<span class="qy none">—</span>'
+        up = pct_change >= 0
+        return (f'<span class="qy {"up" if up else "down"}">'
+                f'{"▲" if up else "▼"} {abs(pct_change):,.1f}%</span>')
+
+    rows_q = [
+        ("Revenue", money(q_rev) if q_rev is not None else "—", qq.change("revenue")),
+        ("Net income", money(q_ni) if q_ni is not None else "—",
+         qq.change("net_income")),
+        ("Diluted EPS", f"{D}{q_eps:,.2f}" if q_eps is not None else "—",
+         qq.change("eps")),
+        ("Net margin", f"{q_margin:,.2f}%" if q_margin is not None else "—",
+         (100 * (q_margin / ya_margin - 1))
+         if (q_margin is not None and ya_margin) else None),
+    ]
+
+    body_q = "".join(
+        f'<tr><td class="qlabel">{E(name)}</td>'
+        f'<td class="qval">{val}</td>'
+        f"<td>{yoy_cell(chg)}</td></tr>"
+        for name, val, chg in rows_q)
+
+    st.markdown(
+        '<div class="panel"><table class="qtable"><thead><tr>'
+        f'<th>{E(qq.end.strftime("%b %Y"))}</th><th>Reported</th>'
+        "<th>vs a year earlier</th></tr></thead>"
+        f"<tbody>{body_q}</tbody></table></div>", unsafe_allow_html=True)
+
+    if est:
+        beat = est["actual"] >= est["estimate"]
+        gap_pct = est.get("surprise_pct")
+        st.markdown(
+            f'<div class="qbeat {"good" if beat else "weak"}">'
+            f'<span class="k">Against expectations</span>'
+            f'<span class="v">{D}{est["actual"]:,.2f} reported against '
+            f'{D}{est["estimate"]:,.2f} expected</span>'
+            + (f'<span class="d">{"▲" if beat else "▼"} {abs(gap_pct):,.1f}% '
+               f'{"above" if beat else "below"} the estimate</span>'
+               if gap_pct is not None else "")
+            + "</div>", unsafe_allow_html=True)
+    else:
+        st.caption("No analyst estimate is available for this quarter.")
+
+    # Year to date, once more than one quarter is in.
+    if len(filed) > 1:
+        ytd = sum(x.get("revenue") for x in eq.quarters if x.get("revenue"))
+        run = ytd * 4 / len(filed) if filed else None
+        last_year = latest.get("revenue")
+        if run and last_year:
+            chg = 100 * (run / last_year - 1)
+            st.markdown(
+                f'<div class="runrate"><span>{len(filed)} quarters in, sales total '
+                f'<b>{money(ytd)}</b>. At this pace the year lands near '
+                f'<b>{money(run)}</b> against <b>{money(last_year)}</b> last year — '
+                f'<b>{pct(chg)}</b>. <span style="color:var(--text-3)">Arithmetic on '
+                "the quarters filed, not a forecast.</span></span></div>",
                 unsafe_allow_html=True)
 
 # --------------------------------------------------------------------------
@@ -2718,7 +2806,10 @@ if surp:
         '<div class="explain"><p>Before a company reports, analysts publish a figure '
         "they expect it to earn per share. <b>The share price already reflects that "
         "figure</b>, so what moves the price is the gap between the guess and the "
-        "result — not whether profits went up.</p></div>", unsafe_allow_html=True)
+        "result — not whether profits went up.</p>"
+        "<p>These are <b>quarterly</b> figures, so they will not match the annual "
+        "earnings per share shown at the top of the page.</p></div>",
+        unsafe_allow_html=True)
 
     nq = next_estimate(ticker)
     if nq:
@@ -2749,7 +2840,7 @@ if surp:
 
     st.markdown(
         '<div class="panel"><table class="comp"><thead><tr>'
-        "<th>Quarter ending</th><th>Analysts expected</th><th>Company reported</th>"
+        "<th>Quarter ending</th><th>Expected EPS</th><th>Reported EPS</th>"
         "<th>Difference</th></tr></thead>"
         f"<tbody>{rows}</tbody></table></div>", unsafe_allow_html=True)
 
