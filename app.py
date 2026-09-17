@@ -2660,10 +2660,11 @@ elif eq.quarters:
                     key=f"qsel_{cik}")
     qq = by_q[pick]
 
-    # Estimates are keyed by period end date, so a quarter is matched to its
-    # estimate by date rather than by the filer's own fiscal numbering, which
-    # runs ahead of the calendar for anyone whose year does not end in December.
-    est = None
+    # Matched by period end date rather than the filer's fiscal numbering,
+    # which runs ahead of the calendar for anyone whose year does not end in
+    # December. The closest estimate wins, not the first one inside the
+    # window -- taking the first could pair a quarter with its neighbour.
+    est, best_gap = None, None
     for r in surprises(ticker):
         if r.get("actual") is None or not r.get("period"):
             continue
@@ -2671,9 +2672,8 @@ elif eq.quarters:
             gap = abs((date.fromisoformat(r["period"][:10]) - qq.end).days)
         except Exception:
             continue
-        if gap <= 45:
-            est = r
-            break
+        if gap <= 45 and (best_gap is None or gap < best_gap):
+            est, best_gap = r, gap
 
     q_rev = qq.get("revenue")
     q_ni = qq.get("net_income")
@@ -2718,13 +2718,31 @@ elif eq.quarters:
         gap_pct = est.get("surprise_pct")
         st.markdown(
             f'<div class="qbeat {"good" if beat else "weak"}">'
-            f'<span class="k">Against expectations</span>'
-            f'<span class="v">{D}{est["actual"]:,.2f} reported against '
+            f'<span class="k">Against analyst expectations</span>'
+            f'<span class="v">{D}{est["actual"]:,.2f} against '
             f'{D}{est["estimate"]:,.2f} expected</span>'
             + (f'<span class="d">{"▲" if beat else "▼"} {abs(gap_pct):,.1f}% '
                f'{"above" if beat else "below"} the estimate</span>'
                if gap_pct is not None else "")
             + "</div>", unsafe_allow_html=True)
+
+        # These two numbers routinely disagree with the filing above, and the
+        # reason is worth knowing: they are not measuring the same thing.
+        if q_eps is not None and abs(est["actual"] - q_eps) > 0.01:
+            with st.expander("Why this differs from the EPS above"):
+                st.markdown(
+                    f"The filing reports **{DH}{q_eps:,.2f}** for this quarter. "
+                    f"Analysts compare against **{DH}{est['actual']:,.2f}**.\n\n"
+                    "**They are different measures.** The filing figure follows "
+                    "accounting rules and includes everything — restructuring charges, "
+                    "legal settlements, writedowns, one-off gains. The analyst figure "
+                    "is **adjusted**: those one-offs are stripped out to show what the "
+                    "business earned from ordinary trading.\n\n"
+                    "Neither is dishonest, and both are published. **Adjusted earnings "
+                    "are easier to compare between years; the filing figure is the one "
+                    "that cannot be presented flatteringly.** A company whose adjusted "
+                    "number is persistently far above its reported one is worth a "
+                    "closer look at what keeps being excluded.")
     else:
         st.caption("No analyst estimate is available for this quarter.")
 
