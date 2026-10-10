@@ -593,14 +593,69 @@ def value(eq: Equity, price: float | None, day_change_pct: float | None = None) 
     return v
 
 
+#: Ratios a share split actually comes in. A jump by one of these, with
+#: profit unchanged, is a split rather than a change in the business.
+_SPLIT_RATIOS = (2, 3, 4, 5, 6, 7, 8, 10, 15, 20, 25, 30, 40, 50)
+
+
+def split_break(eq: Equity, tol: float = 0.12) -> int:
+    """Index of the first year whose per-share figures match today's basis.
+
+    A filing restates only the two comparative years printed beside the
+    current one, so after a share split the older years in an SEC facts
+    file keep their pre-split EPS and share count for good. Prices,
+    meanwhile, are back-adjusted across the whole history. Dividing one by
+    the other produced a P/E wrong by the split ratio -- a four-for-one
+    split made the early years look four times cheaper than they were,
+    with a cliff in the middle of the chart where the two bases met.
+
+    The share count is the signal, not EPS. A split multiplies the count
+    by a clean ratio in a single year; underlying growth moves EPS at the
+    same time, so an EPS jump of 3.7x can be a four-for-one split and a
+    good year together, and testing EPS against 4 misses it. Buybacks and
+    issuance move the count by a few per cent a year, nowhere near 2x.
+
+    Net income has to stay continuous as well. Profit belongs to the whole
+    company and a split cannot touch it, so a halving of EPS alongside a
+    halving of profit is a bad year, not a new denominator.
+
+    Returns 0 when the whole series shares one basis.
+    """
+    years = eq.years
+    cut = 0
+    for i in range(1, len(years)):
+        prev, cur = years[i - 1], years[i]
+        a, b = prev.get("shares"), cur.get("shares")
+        if not a or not b or a <= 0 or b <= 0:
+            # No share count: fall back to EPS, which is noisier because
+            # growth rides on top of the split ratio.
+            a, b = prev.get("eps"), cur.get("eps")
+            if not a or not b or a <= 0 or b <= 0:
+                continue
+        ratio = b / a if b > a else a / b
+        if not any(abs(ratio - r) <= tol * r for r in _SPLIT_RATIOS):
+            continue
+        na, nb = prev.get("net_income"), cur.get("net_income")
+        if na and nb and na > 0 and nb > 0:
+            profit_ratio = na / nb if na > nb else nb / na
+            if profit_ratio > 1.5:
+                continue
+        cut = i
+    return cut
+
+
 def pe_history(eq: Equity, prices: dict[str, float]) -> list[tuple[str, float]]:
     """P/E per year, given a price for each fiscal year label.
 
-    Only years with both a price and positive EPS appear, so a loss-making year
-    drops out rather than producing a negative multiple.
+    Only years with both a price and positive EPS appear, so a loss-making
+    year drops out rather than producing a negative multiple. Years before
+    a share split drop out too, because their EPS is on a different
+    per-share basis from the price -- see split_break. Showing fewer years
+    is better than showing wrong ones.
     """
+    start = split_break(eq)
     out = []
-    for p in eq.years:
+    for p in eq.years[start:]:
         eps = p.get("eps")
         px = prices.get(p.label)
         if eps and eps > 0 and px:
