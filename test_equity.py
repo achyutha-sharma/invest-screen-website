@@ -588,6 +588,78 @@ amounts shown in the accompanying tables and discussion below.</p>
 """
 
 
+def test_forgiving_search():
+    """A beginner types the brand, and spells it wrong.
+
+    Two separate problems. A typo is a string-distance problem and the
+    fuzzy tier handles it -- except the length filter used to compare only
+    against the full name, so "exon" was thrown out ten characters from
+    "exxonmobilcorp" without ever being tried against "exxon". A brand name
+    is not a string problem at all: no amount of matching gets from
+    "google" to "Alphabet Inc.", because the word is not in the filed name.
+    """
+    import tempfile, pathlib
+    from sec_ratios import SecClient, _brand_ticker, _norm
+
+    rows = [
+        (320193, "AAPL", "Apple Inc."),
+        (789019, "MSFT", "MICROSOFT CORP"),
+        (1652044, "GOOGL", "Alphabet Inc."),
+        (1018724, "AMZN", "AMAZON COM INC"),
+        (1045810, "NVDA", "NVIDIA CORP"),
+        (320187, "NKE", "NIKE, Inc."),
+        (104169, "WMT", "Walmart Inc."),
+        (34088, "XOM", "EXXON MOBIL CORP"),
+        (1326801, "META", "Meta Platforms, Inc."),
+        (21344, "KO", "COCA COLA CO"),
+        (77476, "PEP", "PEPSICO INC"),
+        (1065280, "NFLX", "NETFLIX INC"),
+        (1067983, "BRK-B", "BERKSHIRE HATHAWAY INC"),
+        (51143, "IBM", "INTERNATIONAL BUSINESS MACHINES CORP"),
+    ]
+    data = {str(i): {"cik_str": c, "ticker": t, "title": n}
+            for i, (c, t, n) in enumerate(rows)}
+    c = SecClient(user_agent="t t@e.com",
+                  cache_dir=pathlib.Path(tempfile.mkdtemp()))
+    c._get_json = lambda *a, **k: data
+
+    def first(q):
+        hits = c.search(q, limit=3)
+        return hits[0]["ticker"] if hits else None
+
+    # Typos, including the short-query-long-name case that was broken.
+    for typo, want in (("nkie", "NKE"), ("walmrt", "WMT"),
+                       ("mcrosoft", "MSFT"), ("amazn", "AMZN"),
+                       ("exon", "XOM"), ("netflicks", "NFLX"),
+                       ("nvdia", "NVDA")):
+        assert first(typo) == want, (typo, first(typo))
+
+    # Brands, which no string distance can reach.
+    for brand, want in (("google", "GOOGL"), ("youtube", "GOOGL"),
+                        ("facebook", "META"), ("instagram", "META"),
+                        ("iphone", "AAPL"), ("xbox", "MSFT"),
+                        ("aws", "AMZN"), ("jordan", "NKE"),
+                        ("gatorade", "PEP"), ("sprite", "KO")):
+        assert first(brand) == want, (brand, first(brand))
+
+    # A misspelt brand still lands.
+    for typo, want in (("googel", "GOOGL"), ("gogle", "GOOGL"),
+                       ("facebok", "META"), ("youtub", "GOOGL")):
+        assert first(typo) == want, (typo, first(typo))
+
+    # And the correct spelling is never made worse by any of this.
+    for q, want in (("apple", "AAPL"), ("nike", "NKE"), ("meta", "META"),
+                    ("ibm", "IBM"), ("berkshire", "BRK-B")):
+        assert first(q) == want, (q, first(q))
+
+    # The dangerous direction: a brand hit jumps the queue, so a loose
+    # match here sends someone confidently to the wrong company.
+    for q in ("berkshire", "ibm", "office depot", "jordan industries",
+              "coke bottling", "apple hospitality", "oscar"):
+        assert _brand_ticker(_norm(q), q) is None, q
+    print("forgiving search ok")
+
+
 def test_versus_index():
     """A company against simply owning the index, over the years they share."""
     from datetime import date as _d
@@ -1434,6 +1506,7 @@ def main():
     test_surprises()
     test_news()
     test_rate_pacing()
+    test_forgiving_search()
     test_versus_index()
     test_filing_text()
     test_risk_junk_rejected()
