@@ -1007,9 +1007,12 @@ MARKET_LONG_RUN = 10.0
 def annualised(hist, years: int = 10) -> float | None:
     """Compound annual price return over the period held in `hist`.
 
-    Price only: dividends are not in a price series, so a company paying a
-    good dividend is understated here. The page says so rather than quietly
-    comparing a total return against a price one.
+    This is a total return, not a price return. The series it is given
+    comes from `prices.monthly`, which uses Tiingo's adjusted close --
+    adjusted for splits *and* dividends, so a dividend is already in the
+    number as though it had been reinvested. The docstring and the page
+    both used to claim the opposite, which understated nothing and
+    mislabelled everything.
     """
     if not hist or len(hist) < 24:
         return None
@@ -2177,6 +2180,17 @@ if mode == "Summary":
         q.day_change_pct if q.available else None,
         money=lambda v: f"{D}{v:,.2f}"), "How the shares have behaved")
 
+    # ---- against simply owning the market ----
+    # The comparison a new investor almost never makes. SPY's history is
+    # already cached for the home page, so this costs nothing most of the
+    # time, and the window is whatever the two series share.
+    para(summ.versus_sentences(
+        eq.entity.split(",")[0].title(),
+        summ.versus_index(px_series,
+                          prices.monthly("SPY") if prices.has_history else []),
+        money=lambda v: f"{D}{v:,.0f}"),
+        "Against just buying the index")
+
     # ---- the business ----
     biz = []
     rev_s, eps_s, ni_s = eq.series("revenue"), eq.series("eps"), eq.series("net_income")
@@ -2504,11 +2518,12 @@ if mode == "Compare":
             # mistake on the page, because it was one.
             st.caption(
                 why_peers
-                + f" Price return is annualised over the years shown and is green above "
+                + f" Return is annualised over the years shown and is green above "
                 f"{MARKET_LONG_RUN:.0f}% a year, roughly the S&P 500's long-run average. "
-                "It leaves out dividends, so a company paying one has returned more than "
-                "shown, and past returns say nothing about future ones. Growth comes from "
-                "filings; a company with fewer than two filed years shows a dash.")
+                "Dividends are included as though they had been reinvested, so this is "
+                "the whole return, not just the price move. Past returns say nothing "
+                "about future ones. Growth comes from filings; a company with fewer "
+                "than two filed years shows a dash.")
 
             others = [r for r in scored if not r["self"]]
             if others:
