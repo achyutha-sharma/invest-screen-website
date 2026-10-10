@@ -585,6 +585,36 @@ div[data-testid="stHorizontalBlock"] .stButton button em{
   text-transform:lowercase;letter-spacing:.02em}
 
 
+/* peer buttons under the comparison table.
+   Without this they inherit the metric-card rule above and come out as
+   tiny uppercase letter-spaced tickers -- OPEN COST -- which look like
+   labels rather than something to press, and say nothing the table has
+   not already said. */
+.peernav{display:none}
+div[data-testid="stHorizontalBlock"]:has(.peernav){
+  gap:.55rem !important;align-items:stretch;margin:.1rem 0 .2rem}
+div[data-testid="stHorizontalBlock"]:has(.peernav)
+  div[data-testid="stVerticalBlock"]{gap:0 !important}
+div[data-testid="stHorizontalBlock"]:has(.peernav) .stButton button{
+  display:flex !important;flex-direction:column !important;
+  align-items:flex-start !important;justify-content:center !important;
+  gap:.1rem !important;min-height:3.1rem !important;height:100% !important;
+  padding:.5rem .75rem !important;border-radius:10px !important;
+  background:var(--surf) !important;border:1px solid var(--line-2) !important;
+  white-space:normal;transition:border-color .15s,background .15s}
+div[data-testid="stHorizontalBlock"]:has(.peernav) .stButton button:hover{
+  border-color:var(--acc) !important;background:var(--surf-2) !important}
+div[data-testid="stHorizontalBlock"]:has(.peernav) .stButton button p{
+  text-transform:none !important;letter-spacing:0 !important;
+  margin:0 !important;line-height:1.25 !important;text-align:left}
+div[data-testid="stHorizontalBlock"]:has(.peernav) .stButton button
+  p:first-of-type{font-size:.78rem !important;font-weight:700 !important;
+  color:var(--text) !important}
+div[data-testid="stHorizontalBlock"]:has(.peernav) .stButton button
+  p:nth-of-type(2){font-family:var(--mono) !important;font-size:.63rem !important;
+  font-weight:600 !important;color:var(--acc) !important;
+  letter-spacing:.04em !important}
+
 
 /* ------------------------------------------------------------------ *
  * Mobile
