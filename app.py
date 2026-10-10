@@ -1464,6 +1464,13 @@ def biggest_moves(tickers: tuple, market_pct: float | None):
     # is deliberately modest to stay inside the feed's rate limit.
     from concurrent.futures import ThreadPoolExecutor
 
+    # This panel is a nicety, not the reason anyone came. If the minute's
+    # allowance is nearly spent -- several readers at once, or one reader
+    # opening a run of companies -- it gives up rather than making them
+    # wait for it.
+    if PriceClient.budget_left() < len(tickers) // 2:
+        return []
+
     def one(tk):
         try:
             qt = prices.quote(tk)
@@ -1510,7 +1517,7 @@ if ("cik" not in st.session_state and not st.session_state.get("fund")
         if _tk == "SPY":
             mkt_pct = _p
 
-    moves = biggest_moves(tuple(WATCHLIST), mkt_pct)
+    moves = biggest_moves(tuple(watch_slice(WATCHLIST)), mkt_pct)
     if moves:
         st.markdown('<p class="picker">Some of the biggest movers today</p>',
                     unsafe_allow_html=True)
@@ -2381,32 +2388,42 @@ if mode == "Compare":
                         f"<thead>{head}</thead><tbody>{body}</tbody></table></div>",
                         unsafe_allow_html=True)
 
+            # One caption, not two. This said much the same thing twice --
+            # once above the buttons and once below -- which read as a
+            # mistake on the page, because it was one.
             st.caption(
                 why_peers
                 + f" Price return is annualised over the years shown and is green above "
-                f"{MARKET_LONG_RUN:.0f}% a year, roughly the S&P 500's long-run average; "
-                "it excludes dividends. Growth figures come from filings; a company with "
-                "fewer than two filed years shows a dash.")
+                f"{MARKET_LONG_RUN:.0f}% a year, roughly the S&P 500's long-run average. "
+                "It leaves out dividends, so a company paying one has returned more than "
+                "shown, and past returns say nothing about future ones. Growth comes from "
+                "filings; a company with fewer than two filed years shows a dash.")
 
             others = [r for r in scored if not r["self"]]
             if others:
+                st.markdown('<p class="picker">Open any of them</p>',
+                            unsafe_allow_html=True)
                 cols = st.columns(min(len(others), 4))
                 for col, r in zip(cols, others):
-                    if col.button(f"Open {r['ticker']}", key=f"cmp_{r['ticker']}",
-                                  use_container_width=True):
-                        st.session_state["cik"] = r["cik"]
-                        st.session_state["ticker"] = r["ticker"]
-                        st.session_state["name"] = r["name"]
-                        for k in ("step", "quiz", "quiz_round", "quiz_seed", "quiz_seen"):
-                            st.session_state.pop(k, None)
-                        st.rerun()
-
-            st.caption(
-                why_peers
-                + f" Returns are price only and are green above {MARKET_LONG_RUN:.0f}% a "
-                "year, roughly what the S&P 500 has averaged over decades; dividends are "
-                "not included, so a company paying one has returned more than shown. Past "
-                "returns say nothing about future ones.")
+                    # Name first, ticker underneath. The table above lists
+                    # companies by name, so a row of bare tickers gave the
+                    # reader nothing to match them against.
+                    nm = r["name"]
+                    if len(nm) > 20:
+                        nm = nm[:19].rstrip(" ,.") + "…"
+                    with col:
+                        st.markdown('<div class="peernav"></div>',
+                                    unsafe_allow_html=True)
+                        if st.button(f"{nm}\n\n{r['ticker']}  →",
+                                     key=f"cmp_{r['ticker']}",
+                                     use_container_width=True):
+                            st.session_state["cik"] = r["cik"]
+                            st.session_state["ticker"] = r["ticker"]
+                            st.session_state["name"] = r["name"]
+                            for k in ("step", "quiz", "quiz_round",
+                                      "quiz_seed", "quiz_seen"):
+                                st.session_state.pop(k, None)
+                            st.rerun()
 
     st.markdown('<p class="disc">Figures come from SEC filings; share prices come from a '
                 "market feed. Educational research only — not advice.</p>" + BYLINE,
