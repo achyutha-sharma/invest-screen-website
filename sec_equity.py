@@ -462,6 +462,19 @@ def _current_year_quarters(store: EquityStore, latest_fy_end: date) -> list[Peri
     def quarter_of(end: date) -> int:
         return ((end.month - fy_month - 1) % 12) // 3 + 1
 
+    def fiscal_year_of(end: date, qn: int) -> int:
+        """The year the fiscal year *ends* in, which is what FY names.
+
+        Using the calendar year of the quarter end was right only for
+        December filers. A company closing its year in May files Q1 in
+        August and Q3 the following February, so three quarters of one
+        fiscal year came out labelled across two -- "Q1 FY2025" sitting
+        next to "Q3 FY2026" for the same year's trading. Stepping forward
+        the quarters still to come lands on the year end itself.
+        """
+        m = end.month - 1 + 3 * (4 - qn)
+        return end.year + m // 12
+
     # Two ends landing on the same quarter means one is not a quarter at all.
     # Keep the later, which is the one the newest filing reported.
     picked: dict[int, date] = {}
@@ -471,7 +484,7 @@ def _current_year_quarters(store: EquityStore, latest_fy_end: date) -> list[Peri
     out = []
     for qn in sorted(picked):
         end = picked[qn]
-        p = Period(end=end, fy=end.year, fp=f"Q{qn}")
+        p = Period(end=end, fy=fiscal_year_of(end, qn), fp=f"Q{qn}")
         p.inputs["revenue"] = revenue[end]
         p.sources["revenue"] = "10-Q"
         for key, chain in (("net_income", NET_INCOME), ("ebit", OPERATING_INCOME)):
