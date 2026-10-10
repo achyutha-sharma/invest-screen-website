@@ -80,6 +80,10 @@ st.markdown("""
   --teach:#4FC98C; --teach-2:#7FE0B0; --teach-dim:#2E7A55;
   --up:#5FD69B; --up-bg:#16341F; --down:#FF7B8A; --down-bg:#3A1A25;
   --warn:#F0C46A; --warn-bg:#3A2E17;
+  /* A note, not a warning. Deliberately not the coral above: that one is
+     reserved for direction, and a reader who has learned coral means "down"
+     should not meet it on a panel that is merely telling them something. */
+  --note:#EFA3CE; --note-bg:#351E2D;
   --c1:#A98BFF; --c2:#5FD69B; --c3:#F0C46A; --c4:#6FC6E8; --c5:#FF9BB0;
   --mono:'IBM Plex Mono',ui-monospace,Menlo,monospace;
 }
@@ -617,17 +621,18 @@ div[data-testid="stHorizontalBlock"]:has(.peernav) .stButton button
   letter-spacing:.04em !important}
 
 
-/* the banner that says the annual figures are a year behind */
+/* the banner that says the annual figures are a year behind, and the one
+   the valuation page uses when it has nothing to show */
 .stale{display:flex;gap:.7rem;align-items:flex-start;
-  background:var(--warn-bg);border:1px solid rgba(240,196,106,.35);
-  border-left:3px solid var(--warn);border-radius:10px;
+  background:var(--note-bg);border:1px solid rgba(239,163,206,.32);
+  border-left:3px solid var(--note);border-radius:10px;
   padding:.7rem .9rem;margin:.1rem 0 1rem}
-.stale .ic{color:var(--warn);font-size:.95rem;line-height:1.5;flex:0 0 auto}
+.stale .ic{color:var(--note);font-size:.95rem;line-height:1.5;flex:0 0 auto}
 .stale p{margin:0;font-size:.82rem;line-height:1.55;color:var(--text-2)}
-.stale b{color:var(--warn);font-weight:700}
-.stale a{color:var(--warn);font-weight:700;text-decoration:none;
-  border-bottom:1px solid rgba(240,196,106,.45)}
-.stale a:hover{border-bottom-color:var(--warn)}
+.stale b{color:var(--note);font-weight:700}
+.stale a{color:var(--note);font-weight:700;text-decoration:none;
+  border-bottom:1px solid rgba(239,163,206,.45)}
+.stale a:hover{border-bottom-color:var(--note)}
 @media (max-width:640px){.stale p{font-size:.78rem}}
 
 
