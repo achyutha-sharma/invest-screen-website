@@ -411,6 +411,10 @@ div[data-testid="stHorizontalBlock"]:has(button[kind])
 .gl p.eg{background:rgba(95,214,155,.07);border-left:2px solid var(--teach-dim);
   padding:.55rem .75rem;border-radius:0 5px 5px 0;margin-top:.7rem;color:var(--text-2)}
 .gl p.eg b{color:var(--teach-2)}
+.gl p.fx{display:inline-block;font-family:var(--mono);font-size:.76rem;
+  font-weight:600;color:var(--acc-2);background:rgba(169,139,255,.09);
+  border:1px solid rgba(169,139,255,.18);border-radius:6px;
+  padding:.34rem .6rem;margin:.55rem 0 .1rem;letter-spacing:.01em}
 .gl p.wm{color:var(--text-3);font-size:.85rem;border-top:1px solid var(--line);
   padding-top:.6rem;margin-top:.7rem}
 .gl p.wm b{color:var(--text-2)}
@@ -1844,6 +1848,7 @@ def teach_slide(i, eq, latest, val=None, quote_=None, px_hist=None):
         terms = [
             ("EPS", "earnings per share",
              f"{D}{eps:,.2f}" if eps is not None else "—",
+             "EPS  =  profit &divide; number of shares",
              "Last year's profit, divided between every share that exists — <b>the profit "
              "belonging to one share</b>.",
              (f"{E(name)} earned {money(ni)} and has {shares_text(shares)} shares, "
@@ -1856,10 +1861,11 @@ def teach_slide(i, eq, latest, val=None, quote_=None, px_hist=None):
 
             ("P/E ratio", "price-to-earnings",
              f"{pe:,.1f}×" if pe else "needs price",
+             "P/E  =  share price &divide; EPS",
              "What you pay for each dollar the share earns in a year. <b>The market's "
              "expectations, priced.</b>",
              (f"At {D}{price:,.2f} a share against {D}{eps:,.2f} of earnings, you pay "
-              f"<b>{D}{pe:,.0f} for every {D}1</b> of annual profit — about {pe:,.0f} years "
+              f"<b>{D}{pe:,.2f} for every {D}1</b> of annual profit — about {pe:,.0f} years "
               "of profit to earn your money back, if nothing changed."
               if pe and price and eps else
               "A $60 share earning $3 trades at 20× — $20 paid per $1 of annual profit."),
@@ -1869,6 +1875,7 @@ def teach_slide(i, eq, latest, val=None, quote_=None, px_hist=None):
 
             ("Net margin", "net profit margin",
              f"{margin:,.1f}%" if margin is not None else "—",
+             "Net margin  =  profit &divide; sales &times; 100",
              "How much of every dollar customers spend survives as profit, after every cost.",
              (f"{E(name)} keeps about <b>{D}{margin:,.0f} of every {D}100</b> customers "
               f"spend."
@@ -1879,6 +1886,7 @@ def teach_slide(i, eq, latest, val=None, quote_=None, px_hist=None):
 
             ("Free cash flow", "cash after capital spending",
              money(fcf),
+             "Free cash flow  =  operating cash &minus; capital spending",
              "Cash left after running the business <i>and</i> paying for the equipment it "
              "needs to keep going.",
              (f"{E(name)} took in {money(ocf)} from operations and spent {money(capex)} on "
@@ -1890,6 +1898,7 @@ def teach_slide(i, eq, latest, val=None, quote_=None, px_hist=None):
 
             ("Dividend yield", "cash paid to owners",
              f"{dy:,.2f}%" if dy else ("none" if not dps else "needs price"),
+             "Dividend yield  =  dividend a share &divide; share price &times; 100",
              "Cash paid to shareholders each year, as a percentage of the share price.",
              (f"{E(name)} declares {D}{dps:,.2f} a share against a {D}{price:,.2f} price, "
               f"so every {D}100 invested pays about <b>{D}{dy:,.2f}</b> a year."
@@ -1903,10 +1912,11 @@ def teach_slide(i, eq, latest, val=None, quote_=None, px_hist=None):
 
         st.markdown('<div class="gloss">' + "".join(
             f'<div class="gl"><div class="t"><b>{E(t)}</b><i>{E(g)}</i><span>{v}</span></div>'
+            f'<p class="fx">{formula}</p>'
             f"<p>{meaning}</p>"
             f'<p class="eg"><b>Here:</b> {example}</p>'
             f'<p class="wm">{why}</p></div>'
-            for t, g, v, meaning, example, why in terms) + "</div>",
+            for t, g, v, formula, meaning, example, why in terms) + "</div>",
             unsafe_allow_html=True)
 
     # ---- 3. what to take away --------------------------------------------
@@ -2544,6 +2554,9 @@ if mode == "Teach me":
         border-color:var(--teach-dim) !important}
       .finish h4{color:var(--teach-2) !important}
       .gl .t span{color:var(--teach-2) !important}
+      .gl p.fx{color:var(--teach-2) !important;
+        background:rgba(79,201,140,.09) !important;
+        border-color:rgba(79,201,140,.22) !important}
       .picker{color:var(--teach) !important}
       div[data-testid="stExpander"]{border-color:var(--teach-dim) !important}
       [data-baseweb="slider"] [role="slider"]{background:var(--teach) !important;
