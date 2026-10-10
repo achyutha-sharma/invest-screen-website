@@ -1498,7 +1498,13 @@ def biggest_moves(tickers: tuple, market_pct: float | None):
     # allowance is nearly spent -- several readers at once, or one reader
     # opening a run of companies -- it gives up rather than making them
     # wait for it.
-    if PriceClient.budget_left() < len(tickers) // 2:
+    #
+    # getattr, not a plain call: app.py and prices.py deploy as separate
+    # files, and for the minutes between the two being pasted the older
+    # prices.py has no budget_left. A missing nicety must not take the
+    # whole home page down with an AttributeError.
+    _budget = getattr(PriceClient, "budget_left", None)
+    if callable(_budget) and _budget() < len(tickers) // 2:
         return []
 
     def one(tk):
