@@ -410,6 +410,137 @@ def test_history():
     print("history ok")
 
 
+def test_split_only_prices():
+    """Valuation needs split-adjusted prices, not dividend-adjusted ones.
+
+    adjClose strips dividends as well as splits. The earnings side of a
+    P/E has had no dividend adjustment, so dividing by adjClose made a
+    dividend payer's past look cheaper the further back you looked.
+    """
+    import pathlib, tempfile
+    from prices import PriceClient
+
+    # $100 a share, paying dividends, then a four-for-one split in 2022.
+    # On today's basis every year is worth $25.
+    def rows(factor=True, close=True):
+        out = []
+        for y in range(2017, 2027):
+            adj = 20.0 if y < 2022 else 25.0        # dividend drag + split
+            r = {"date": f"{y}-12-31T00:00:00.000Z", "adjClose": adj}
+            if close:
+                r["close"] = 100.0 if y < 2022 else 25.0
+            if factor:
+                r["splitFactor"] = 4.0 if y == 2022 else 1.0
+            out.append(r)
+        return out
+
+    def client(**kw):
+        import requests as _r
+        real = _r.get
+        _r.get = lambda url, *a, **k: type(
+            "R", (), {"status_code": 200, "json": staticmethod(lambda: rows(**kw))})()
+        try:
+            c = PriceClient(api_key="x", history_key="t",
+                            cache_dir=pathlib.Path(tempfile.mkdtemp()))
+            return dict(c.monthly("XYZ")), dict(c.monthly_split_only("XYZ"))
+        finally:
+            _r.get = real
+
+    adj, split_only = client()
+    # Dividends must not be stripped: every year sits at today's $25 basis.
+    assert split_only["2017-12-31"] == 25.0, split_only["2017-12-31"]
+    assert split_only["2026-12-31"] == 25.0
+    # The ordinary series is untouched, because returns do want adjClose.
+    assert adj["2017-12-31"] == 20.0
+
+    # Provider without the field: the series is still returned, and the
+    # split guard in sec_equity is what keeps the wrong years off the chart.
+    _, no_factor = client(factor=False)
+    assert no_factor["2026-12-31"] == 25.0
+
+    # No close at all: fall back to the adjusted series rather than nothing.
+    _, no_close = client(close=False)
+    assert no_close["2017-12-31"] == 20.0, no_close["2017-12-31"]
+    print("split-only prices ok")
+
+
+def test_split_break():
+    """A share split must not leave two per-share bases on one chart.
+
+    Filings restate only the two comparative years beside the current one,
+    so older EPS and share counts keep the pre-split basis for good while
+    prices are back-adjusted throughout. The P/E chart used to show the
+    early years cheaper by the whole split ratio, with a cliff where the
+    two bases met.
+    """
+    from sec_equity import pe_history, split_break
+
+    def filer(spec):
+        """spec: {year: (eps, shares, net_income)}"""
+        return extract_equity(build("CO", {
+            "Revenues": {"units": {"USD": [
+                dur(f"{y}-01-01", f"{y}-12-31", 10_000) for y in spec]}},
+            "NetIncomeLoss": {"units": {"USD": [
+                dur(f"{y}-01-01", f"{y}-12-31", v[2]) for y, v in spec.items()]}},
+            "EarningsPerShareDiluted": {"units": {"USD/shares": [
+                dur(f"{y}-01-01", f"{y}-12-31", v[0]) for y, v in spec.items()]}},
+            "WeightedAverageNumberOfDilutedSharesOutstanding": {"units": {"shares": [
+                dur(f"{y}-01-01", f"{y}-12-31", v[1]) for y, v in spec.items()]}},
+        }))
+
+    def growing(split_year, ratio, base_shares=200, growth=1.10):
+        spec = {}
+        for y in range(2017, 2027):
+            ni = int(900 * growth ** (y - 2017))
+            sh = base_shares if y < split_year else base_shares * ratio
+            spec[y] = (round(ni / sh, 3), sh, ni)
+        return spec
+
+    # Four-for-one with real growth underneath. Testing EPS against the
+    # ratio alone misses this -- growth rides on top of the split, so the
+    # EPS jump is 3.7x, not 4x. The share count is the clean signal.
+    eq = filer(growing(2022, 4))
+    assert split_break(eq) == 5, split_break(eq)
+    charted = pe_history(eq, {f"FY{y}": 25.0 for y in range(2017, 2027)})
+    assert [lab for lab, _ in charted] == [f"FY{y}" for y in range(2022, 2027)]
+    # Every value drawn must be the true one.
+    for lab, pe in charted:
+        ni = int(900 * 1.10 ** (int(lab[2:]) - 2017))
+        assert abs(pe - 25.0 / (ni / 800)) < 0.01, (lab, pe)
+
+    # Ten-for-one, fast growth.
+    assert split_break(filer(growing(2024, 10, 250, 1.25))) == 7
+
+    # Buybacks shrinking the count a few per cent a year are not a split.
+    steady = {y: (round(900 * 1.08 ** (y - 2017) / (500 - 8 * (y - 2017)), 3),
+                  500 - 8 * (y - 2017), int(900 * 1.08 ** (y - 2017)))
+              for y in range(2017, 2027)}
+    assert split_break(filer(steady)) == 0
+    assert len(pe_history(filer(steady),
+                          {f"FY{y}": 60.0 for y in range(2017, 2027)})) == 10
+
+    # Profit collapsing fourfold with the share count unchanged is a bad
+    # year, not a new denominator.
+    crash = {}
+    for y in range(2017, 2027):
+        ni = 900 if y < 2022 else 225
+        crash[y] = (round(ni / 200, 2), 200, ni)
+    assert split_break(filer(crash)) == 0
+
+    # No share count filed: the EPS fallback still catches a clean split.
+    bare = extract_equity(build("CO", {
+        "Revenues": {"units": {"USD": [
+            dur(f"{y}-01-01", f"{y}-12-31", 10_000) for y in range(2017, 2027)]}},
+        "NetIncomeLoss": {"units": {"USD": [
+            dur(f"{y}-01-01", f"{y}-12-31", 900) for y in range(2017, 2027)]}},
+        "EarningsPerShareDiluted": {"units": {"USD/shares": [
+            dur(f"{y}-01-01", f"{y}-12-31", 4.50 if y < 2022 else 2.25)
+            for y in range(2017, 2027)]}},
+    }))
+    assert split_break(bare) == 5, split_break(bare)
+    print("split break ok")
+
+
 FAKE_10K = """
 <html><body>
 <table><tr><td>Item 1. Business</td><td>3</td></tr>
@@ -1160,7 +1291,9 @@ def test_news():
     assert PriceClient(api_key="", cache_dir=tmp).news("TSLA") == []
     assert PriceClient(api_key="x", cache_dir=tmp).news("") == []
 
-    (tmp / "n_TSLA.json").write_text(_json.dumps([
+    # The window is part of the cache key, so a four-day request cannot be
+    # served a cached thirty-day answer. The default window is four days.
+    (tmp / "n_TSLA_4.json").write_text(_json.dumps([
         {"headline": "Deliveries fall short of estimates", "source": "Reuters",
          "url": "https://example.com/1", "when": "2026-09-02"},
         {"headline": "Analysts trim targets", "source": "Barrons",
@@ -1178,8 +1311,11 @@ def test_news():
     assert len(PriceClient(api_key="x", cache_dir=tmp).news("TSLA", limit=1)) == 1
 
     # A cache written by older code must not crash the page.
-    (tmp / "n_BAD.json").write_text(_json.dumps("not a list"))
+    (tmp / "n_BAD_4.json").write_text(_json.dumps("not a list"))
     assert PriceClient(api_key="x", cache_dir=tmp).news("BAD") == []
+
+    # A different window must not reuse the four-day cache.
+    assert PriceClient(api_key="", cache_dir=tmp).news("TSLA", days=30) == []
     print("news ok")
 
 
@@ -1235,6 +1371,8 @@ def main():
     test_scorecard()
     test_prices()
     test_history()
+    test_split_only_prices()
+    test_split_break()
     test_surprises()
     test_news()
     test_rate_pacing()
