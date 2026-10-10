@@ -1256,11 +1256,28 @@ def money(v, decimals=1, html=True):
     a = abs(v)
     sign = "−" if v < 0 else ""
     d = D if html else DH
+    # Trillions are reachable now that the valuation page sums a terminal
+    # value: a large company's came out as "$1326.7bn", which nobody reads
+    # as one and a third trillion.
+    if a >= 1e12:
+        return f"{sign}{d}{a / 1e12:.{decimals + 1}f}tn"
     if a >= 1e9:
         return f"{sign}{d}{a / 1e9:.{decimals}f}bn"
     if a >= 1e6:
         return f"{sign}{d}{a / 1e6:.0f}m"
     return f"{sign}{d}{a:,.0f}"
+
+
+def _share_count(n):
+    """A share count at human scale. Appending "m" to a raw count produced
+    "1,481,000,000m" on the page, which is how this got written."""
+    if not n:
+        return "—"
+    if n >= 1e9:
+        return f"{n / 1e9:,.2f}bn shares"
+    if n >= 1e6:
+        return f"{n / 1e6:,.0f}m shares"
+    return f"{n:,.0f} shares"
 
 
 def pct(v, dp=1):
@@ -2252,180 +2269,158 @@ if mode == "Summary":
     st.stop()
 
 if mode == "Forecast":
-    fc = dcf.forecast(eq, price=q.price if q.available else None,
-                      shares=latest.get("shares"),
-                      debt=latest.get("total_debt"), cash=latest.get("cash"),
-                      sic=str(prof.get("sic") or ""))
+    _w = st.slider("Discount rate (WACC)", 6.0, 14.0,
+                   dcf.DEFAULT_DISCOUNT * 100, 0.5, format="%.1f%%",
+                   key="dcf_wacc",
+                   help="The return a buyer wants for waiting and for the "
+                        "risk. Higher means future cash counts for less "
+                        "today.")
+    dv = dcf.valuation(eq, price=q.price if q.available else None,
+                       shares=latest.get("shares"),
+                       debt=latest.get("total_debt"), cash=latest.get("cash"),
+                       sic=str(prof.get("sic") or ""), discount=_w / 100)
 
-    sh("Where ten more years would take it", "if the last ten repeat")
-    st.markdown(
-        '<p class="lead">Each line below is grown at the rate <b>this company '
-        'has actually grown it</b>, taken from its own filings. Nothing is '
-        'guessed and nothing is typed in by hand.</p>',
-        unsafe_allow_html=True)
-
-    # ---- the business itself, before any valuation -------------------
-    rows = ""
-    for ln in fc.lines:
-        if ln.problem or ln.end is None:
-            rows += (f'<tr><td class="mname"><b>{E(ln.label)}</b>'
-                     f'<i>{E(ln.gloss)}</i></td>'
-                     f'<td class="num">—</td><td class="num">—</td>'
-                     f'<td class="num"><span class="ret none">'
-                     f'{E(ln.problem or "not filed")}</span></td></tr>')
-            continue
-        fmt = ((lambda v: f"{D}{v:,.2f}") if ln.per_share else money)
-        tone = "up" if ln.growth > 0 else "down" if ln.growth < 0 else ""
-        rows += (f'<tr><td class="mname"><b>{E(ln.label)}</b>'
-                 f'<i>{E(ln.gloss)}</i></td>'
-                 f'<td class="num">{fmt(ln.now)}</td>'
-                 f'<td class="num">{fmt(ln.end)}</td>'
-                 f'<td class="num"><span class="ret {tone}">'
-                 f'{ln.growth * 100:+,.1f}%</span></td></tr>')
-    if rows:
-        st.markdown(
-            '<div class="panel"><table class="comp cmp"><thead><tr>'
-            '<th class="mname">Measure</th><th>Today</th>'
-            f'<th>Year {fc.horizon}</th><th>A year</th>'
-            "</tr></thead><tbody>" + rows + "</tbody></table></div>",
-            unsafe_allow_html=True)
-        st.caption(
-            "Each line uses its own filed growth rate, so they can disagree — "
-            "and where they do, that is the interesting part. Sales rising "
-            "while cash flow falls means it is costing more to make each sale.")
-
-    if not fc.available:
+    if not dv.available:
+        sh("What it is worth today")
         st.markdown(f'<div class="stale"><span class="ic">●</span>'
-                    f"<p>{E(fc.problem)}</p></div>", unsafe_allow_html=True)
+                    f"<p>{E(dv.problem)}</p></div>", unsafe_allow_html=True)
     else:
-        b = fc.base
-        head, body = dcf.forecast_verdict(fc)
+        head, body = dcf.valuation_verdict(dv)
 
-        sh("What that makes a share worth", f"in {fc.horizon} years")
+        # ---- the answer, first --------------------------------------
+        sh("What it is worth today")
+        side = (f'<span class="bigsub">against {money(dv.price)} today</span>'
+                if dv.price else "")
         st.markdown(
-            f'<div class="panel"><span class="big">{money(b.per_share_end)}'
-            f' a share</span>'
+            f'<div class="panel"><span class="big">{money(dv.per_share)}'
+            f' a share</span>{side}'
             f'<p class="bigsub"><b>{E(head)}.</b> {E(body)}</p></div>',
             unsafe_allow_html=True)
 
-        # ---- the spread --------------------------------------------------
-        sh("If it goes better or worse", "the same sum, three ways")
-        srows = ""
-        for p_ in (fc.slower, fc.base, fc.faster):
-            if p_ is None:
-                continue
-            ret = ("—" if p_.annual_return is None
-                   else f"{p_.annual_return * 100:+,.1f}%")
-            tone = ""
-            if p_.annual_return is not None:
-                tone = ("up" if p_.annual_return >= 0.10
-                        else "" if p_.annual_return >= 0 else "down")
-            srows += (f'<tr class="{"self" if p_ is fc.base else ""}">'
-                      f'<td class="mname"><b>{E(p_.name)}</b>'
-                      f'<i>cash flow {p_.growth * 100:+,.1f}% a year</i></td>'
-                      f'<td class="num">{money(p_.path[-1][1])}</td>'
-                      f'<td class="num">{money(p_.per_share_end)}</td>'
-                      f'<td class="num"><span class="ret {tone}">{ret}</span>'
-                      "</td></tr>")
-        st.markdown(
-            '<div class="panel"><table class="comp cmp"><thead><tr>'
-            '<th class="mname">If…</th><th>Cash flow then</th>'
-            '<th>Value a share</th><th>Return a year</th>'
-            f"</tr></thead><tbody>{srows}</tbody></table></div>",
-            unsafe_allow_html=True)
-        st.caption(
-            f"The middle row is the filed record. The others take "
-            f"{fc.spread * 100:,.1f} points off it and add the same back on. "
-            "Returns are from today's price and leave out dividends, so a "
-            "company paying one would return more than shown.")
+        _rv = dcf.reverse(eq, price=q.price if q.available else None,
+                          shares=latest.get("shares"),
+                          debt=latest.get("total_debt"),
+                          cash=latest.get("cash"),
+                          sic=str(prof.get("sic") or ""))
+        if _rv.available and dv.history is not None:
+            st.caption(
+                f"The same sum backwards: today's price assumes about "
+                f"{_rv.implied * 100:,.1f}% a year. The filings show "
+                f"{dv.history * 100:,.1f}%.")
 
-        # ---- how it was done ---------------------------------------------
-        sh("How this was worked out", "every step, and where each number came from")
-        _sh_now = latest.get("shares") or 0
-        _shares_txt = (f"{_sh_now / 1e9:,.2f}bn" if _sh_now >= 1e9
-                       else f"{_sh_now / 1e6:,.0f}m" if _sh_now >= 1e6
-                       else f"{_sh_now:,.0f}")
-        steps = [
-            ("1. Measured the growth",
-             f"{b.growth * 100:+,.1f}% a year",
-             f"Free cash flow in the oldest filed year against the newest, "
-             f"compounded across {fc.history_years} years. Cash flow is "
-             f"operating cash less capital spending, both tagged in the "
-             f"cash flow statement of the 10-K."),
-            ("2. Picked a starting point", money(fc.fcf_now),
-             f"The average of the last {fc.base_years} filed years, not the "
-             "latest one. A single year of heavy building would otherwise "
-             "set the whole projection."),
-            ("3. Grew it forward", money(b.path[-1][1]),
-             f"That starting figure compounded at {b.growth * 100:+,.1f}% for "
-             f"{fc.horizon} years."),
-            ("4. Valued what it became",
-             f"{fc.exit_multiple:,.0f}× cash flow",
-             ("What the market pays for this company's cash flow today "
-              f"({fc.multiple_now:,.0f}× market value plus debt, divided by "
-              "cash flow), held inside a sane band."
-              if fc.multiple_now else
-              "A default multiple, because there is no price to read one from.")),
-            ("5. Took off what is owed", money(fc.net_debt),
-             "Borrowings less cash, from the balance sheet. Lenders are paid "
-             "before owners, so this comes out before anything reaches a "
-             "shareholder."),
-            ("6. Split it across the shares", _shares_txt + " shares",
-             "The diluted share count from the latest filing, held where it "
-             "is. Buybacks would lift the per-share figure; new shares would "
-             "lower it."),
+        # ---- step 1 --------------------------------------------------
+        sh("Step 1 — Forecast the cash",
+           f"{dv.growth * 100:+,.1f}% a year, its own filed rate")
+        st.markdown(
+            '<div class="panel"><table class="comp cmp"><thead><tr><th>Year</th>'
+            + "".join(f"<th>{s.year}</th>" for s in dv.steps)
+            + '</tr></thead><tbody><tr><td class="mname"><b>Free cash flow</b></td>'
+            + "".join(f"<td>{money(s.cash)}</td>" for s in dv.steps)
+            + "</tr></tbody></table></div>", unsafe_allow_html=True)
+
+        # What is driving that cash: the same growth sum on each line of
+        # the business, so a reader can see whether they move together.
+        _lrows = ""
+        for ln in dcf.forecast_lines(eq, years=len(dv.steps)):
+            if ln.end is None:
+                _lrows += (f'<tr><td class="mname"><b>{E(ln.label)}</b></td>'
+                           f'<td class="num">—</td><td class="num">—</td>'
+                           f'<td class="num"><span class="ret none">'
+                           f'{E(ln.problem)}</span></td></tr>')
+                continue
+            _f = (lambda x: f"{D}{x:,.2f}") if ln.per_share else money
+            _t = "up" if ln.growth > 0 else "down" if ln.growth < 0 else ""
+            _lrows += (f'<tr><td class="mname"><b>{E(ln.label)}</b></td>'
+                       f'<td class="num">{_f(ln.now)}</td>'
+                       f'<td class="num">{_f(ln.end)}</td>'
+                       f'<td class="num"><span class="ret {_t}">'
+                       f'{ln.growth * 100:+,.1f}%</span></td></tr>')
+        if _lrows:
+            st.markdown(
+                '<div class="panel"><table class="comp cmp"><thead><tr>'
+                '<th class="mname">Also growing at</th><th>Today</th>'
+                f'<th>Year {len(dv.steps)}</th><th>A year</th></tr></thead>'
+                f"<tbody>{_lrows}</tbody></table></div>",
+                unsafe_allow_html=True)
+
+        # ---- step 2 --------------------------------------------------
+        sh("Step 2 — Discount it to today", f"at {dv.discount * 100:,.1f}%")
+        st.markdown(
+            '<div class="panel"><table class="comp cmp"><thead><tr><th>Year</th>'
+            + "".join(f"<th>{s.year}</th>" for s in dv.steps)
+            + '</tr></thead><tbody>'
+            + '<tr><td class="mname"><b>Worth today</b></td>'
+            + "".join(f"<td>{money(s.present)}</td>" for s in dv.steps)
+            + "</tr></tbody></table></div>", unsafe_allow_html=True)
+        st.caption(f"{money(dv.steps[-1].cash, html=False).replace(DH, chr(92) + DH)} "
+                   f"arriving in year {dv.steps[-1].year} is worth "
+                   f"{money(dv.steps[-1].present, html=False).replace(DH, chr(92) + DH)} "
+                   "now. That is the whole idea of a discount rate.")
+
+        # ---- step 3 --------------------------------------------------
+        sh("Step 3 — Add it up")
+        _tot = [
+            (f"The {len(dv.steps)} years above, discounted", money(dv.pv_forecast)),
+            ("Everything after them, discounted", money(dv.pv_terminal)),
+            ("<b>Company value</b>", f"<b>{money(dv.enterprise)}</b>"),
+            ("Less borrowings, after cash", "−" + money(dv.net_debt)
+             if dv.net_debt >= 0 else "+" + money(abs(dv.net_debt))),
+            ("<b>Value to shareholders</b>", f"<b>{money(dv.equity)}</b>"),
+            ("Split across the shares", _share_count(latest.get("shares"))),
         ]
         st.markdown('<div class="panel"><table class="comp"><tbody>' + "".join(
-            f'<tr><td class="mname"><b>{E(a)}</b><i>{E(c)}</i></td>'
-            f'<td class="num">{v}</td></tr>' for a, v, c in steps)
-            + "</tbody></table></div>", unsafe_allow_html=True)
-
-        st.caption("Sources: every figure above is tagged in SEC filings "
-                   "(Forms 10-K and 10-Q) except the share price, which comes "
-                   "from a market data feed.")
-
-        for n in fc.notes:
-            st.caption(n)
-
-        rv = dcf.reverse(eq, price=q.price if q.available else None,
-                         shares=latest.get("shares"),
-                         debt=latest.get("total_debt"),
-                         cash=latest.get("cash"),
-                         sic=str(prof.get("sic") or ""))
-        if rv.available and fc.history is not None:
+            f'<tr><td class="mname">{a}</td><td class="num">{b}</td></tr>'
+            for a, b in _tot)
+            + f'<tr class="self"><td class="mname"><b>Value a share</b></td>'
+            f'<td class="num"><b>{money(dv.per_share)}</b></td></tr>'
+            "</tbody></table></div>", unsafe_allow_html=True)
+        if dv.terminal_share:
             st.caption(
-                f"The same sum backwards: today's price already assumes about "
-                f"{rv.implied * 100:,.1f}% a year. The filings show "
-                f"{fc.history * 100:,.1f}%.")
+                f"{dv.terminal_share:.0f}% of that value is the lump at the "
+                "end — the years you can forecast are rarely where the value "
+                "sits.")
 
-    with st.expander("What this can and cannot tell you"):
-        st.markdown(
-            "**What it does.** Takes the rate each measure has grown at "
-            f"across the filed years and carries it forward {dcf.HORIZON} "
-            "years. The cash flow line is then turned into a share price: "
-            "multiply by what the market pays for cash flow today, subtract "
-            "borrowings, divide by the shares.\\n\\n"
-            "**Why three rows.** One projected number looks precise and is "
-            "not. Taking a few points off the growth rate and adding the "
-            "same back on shows how much of the answer is the sum and how "
-            "much is the guess underneath it.\\n\\n"
-            "**What it is not.** Not a forecast, not a price target. It "
-            "answers one narrow question: what the last ten years would be "
-            "worth if they happened again. Most companies that grew quickly "
-            "for a decade did not grow quickly for the next one, and a "
-            "company in decline rarely declines forever either.\\n\\n"
-            "**Where it breaks.** It needs at least four filed years and "
-            "positive cash flow today, so it cannot value a young company or "
-            "one investing more than it earns. It does not work on banks or "
-            "insurers. Growth is capped at "
-            f"{dcf.GROWTH_CAP * 100:.0f}% a year and floored at "
-            f"{dcf.GROWTH_FLOOR * 100:.0f}%, because nothing compounds past "
-            "those for ten years.")
+        # ---- is it growing, and why that matters ---------------------
+        note = dcf.growth_note(dv)
+        if note:
+            sh("Is the cash growing?")
+            st.markdown(f'<div class="panel narrate"><p>{E(note)}</p></div>',
+                        unsafe_allow_html=True)
 
-    st.markdown('<p class="disc">Growth rates and cash flow come from SEC '
-                "filings; the share price comes from a market feed. The "
-                "projection is arithmetic on that record, not a forecast of "
-                "it. Educational only — not advice.</p>" + BYLINE,
+    # ---- how, and why it is only a guess -----------------------------
+    sh("How this was done", "and why it is an estimate, not an answer")
+    st.markdown(
+        '<div class="panel narrate">'
+        "<p><b>Forecasting</b> says how much cash a company might make. "
+        "<b>A DCF</b> takes those forecasts and works out what they are "
+        "worth today. The difference is the discounting.</p>"
+        "<p><b>What was used.</b> Free cash flow — operating cash less "
+        "capital spending — from the cash flow statement in every 10-K "
+        "filed. The growth rate is what that figure has actually done, "
+        "compounded. Borrowings, cash and the share count come from the "
+        "balance sheet. Only the discount rate and the long-run growth "
+        "rate are chosen rather than filed.</p>"
+        "<p><b>Why it is a guess.</b> Three reasons, and they are big "
+        "ones.</p>"
+        "</div>", unsafe_allow_html=True)
+    st.markdown(
+        '<div class="panel"><table class="comp"><tbody>'
+        '<tr><td class="mname"><b>The past is not the future</b>'
+        "<i>a rate that held for ten years need not hold for five more</i>"
+        "</td></tr>"
+        '<tr><td class="mname"><b>The discount rate is chosen</b>'
+        "<i>move it two points and the answer moves by a quarter — try the "
+        "slider</i></td></tr>"
+        '<tr><td class="mname"><b>Most of the value is the last step</b>'
+        "<i>the lump after year five is a formula, not a forecast</i>"
+        "</td></tr>"
+        "</tbody></table></div>", unsafe_allow_html=True)
+    st.caption("A DCF is a way of writing down what you believe, so you can "
+               "see whether you believe it. It is not a price.")
+
+    st.markdown('<p class="disc">Cash flow, borrowings and the share count '
+                "come from SEC filings; the share price comes from a market "
+                "feed. Educational only — not advice.</p>" + BYLINE,
                 unsafe_allow_html=True)
     st.stop()
 
