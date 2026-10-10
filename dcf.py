@@ -402,6 +402,8 @@ class Forecast:
     exit_multiple: float | None = None
     multiple_now: float | None = None
     capped: bool = False
+    spread: float = 0.0
+    lines: list = field(default_factory=list)
     horizon: int = HORIZON
     problem: str = ""
     notes: list[str] = field(default_factory=list)
@@ -535,13 +537,22 @@ def forecast(eq, price: float | None, shares: float | None,
             "projection, because a multiple at today's extreme says more "
             "about the present mood than about ten years from now.")
 
+    # Worse and better, not half and half again. Multiplying a negative
+    # rate by 1.5 makes it more negative, so a company in decline had its
+    # "if growth improves" row showing a steeper fall than the base case
+    # -- the table read backwards for exactly the companies where the
+    # question matters most. A spread around the filed rate works whichever
+    # side of zero that rate sits.
+    spread = max(0.03, abs(g) * 0.5)
+    f.spread = spread
     f.base = project(base, g, mult, shares, net, price,
                      "If the record repeats", horizon)
-    f.slower = project(base, g / 2, mult, shares, net, price,
-                       "If growth halves", horizon)
-    f.faster = project(base, min(g * 1.5, GROWTH_CAP), mult, shares, net,
-                       price, "If growth improves", horizon)
+    f.slower = project(base, max(g - spread, GROWTH_FLOOR * 2), mult, shares,
+                       net, price, "If it does worse", horizon)
+    f.faster = project(base, min(g + spread, GROWTH_CAP), mult, shares, net,
+                       price, "If it does better", horizon)
 
+    f.lines = forecast_lines(eq, horizon)
     f.notes.append(
         f"Cash flow starts from the average of the last {n_base} filed years, "
         "so one year of heavy building does not set the whole projection.")
@@ -553,37 +564,108 @@ def forecast(eq, price: float | None, shares: float | None,
 
 
 def forecast_verdict(f: Forecast) -> tuple[str, str]:
-    """The headline sentence for a completed forecast."""
+    """The headline sentence. Short words, one idea."""
     if not f.available or f.base is None:
         return "", ""
     b = f.base
     if b.annual_return is None:
-        return "No share price to compare against", (
-            "The projection gives a value per share, but without a price "
-            "today there is nothing to measure a return from.")
+        return "No price to compare against", (
+            "The projection gives a value a share, but there is no price "
+            "today to measure a return from.")
 
     ann = b.annual_return * 100
-    hist = f.history * 100 if f.history is not None else None
-    hint = (f" That rests on free cash flow growing {b.growth * 100:.0f}% a "
-            f"year, which is what it has done over {f.history_years} filed "
-            "years." if hist is not None else "")
-
     if ann >= 15:
-        return "Well ahead of the market", (
-            f"Carrying the record forward, the shares work out at about "
-            f"{ann:.0f}% a year.{hint} A return that far above the market's "
-            "long-run average usually means the market disagrees with the "
-            "projection somewhere.")
+        return "Far ahead of the market", (
+            f"On its own record, the shares work out at about {ann:.1f}% a "
+            "year. That is well above what shares have returned on average, "
+            "which usually means the market doubts the record continues.")
     if ann >= 8:
-        return "Around what the market has returned", (
-            f"Carrying the record forward gives about {ann:.0f}% a year, "
-            f"roughly what US shares have averaged over decades.{hint}")
+        return "About what the market returns", (
+            f"On its own record, the shares work out at about {ann:.1f}% a "
+            "year — close to what US shares have averaged over decades.")
     if ann >= 0:
-        return "Below the market", (
-            f"Carrying the record forward gives about {ann:.0f}% a year, "
-            f"less than the market's long-run average.{hint} You would be "
-            "paying today for growth that mostly arrives anyway.")
-    return "The record does not justify today's price", (
-        f"Even carrying the filed growth forward for {f.horizon} years, the "
-        f"shares come out below today's price — about {ann:.0f}% a year."
-        f"{hint} The price is assuming something the record does not show.")
+        return "Less than the market", (
+            f"On its own record, the shares work out at about {ann:.1f}% a "
+            "year. That is below the long-run average for shares, so you "
+            "would be paying up for growth you could get more cheaply.")
+    return "The record does not support the price", (
+        f"Even carrying its own record forward for {f.horizon} years, the "
+        f"shares land below today's price — about {ann:.1f}% a year. The "
+        "price is counting on something better than what has been filed.")
+
+
+# --------------------------------------------------------------------------
+# The other lines of the business, carried forward the same way
+# --------------------------------------------------------------------------
+# Cash flow is what the valuation runs on, but it is not what most people
+# picture when they think about a company ten years out. Sales and profit
+# are, and projecting all three at once shows something a single line
+# cannot: whether they move together. A company whose sales grow while its
+# cash flow shrinks is telling you something, and it is easier to see when
+# the two sit side by side.
+
+
+@dataclass
+class Line:
+    """One measure, projected forward at its own filed rate."""
+
+    key: str
+    label: str
+    gloss: str
+    now: float | None = None
+    growth: float | None = None
+    end: float | None = None
+    years: int = 0
+    capped: bool = False
+    per_share: bool = False
+    problem: str = ""
+
+
+#: What to project, in the order a reader meets them on an income statement.
+LINES = [
+    ("revenue", "Sales", "what customers paid", False),
+    ("net_income", "Profit", "what was left after every cost", False),
+    ("eps", "Earnings a share", "that profit, split across the shares", True),
+    ("fcf", "Free cash flow", "cash left after running and reinvesting", False),
+]
+
+
+def forecast_line(eq, key: str, label: str, gloss: str, per_share: bool,
+                  horizon: int = HORIZON) -> Line:
+    """Grow one measure at the rate it has grown at, for `horizon` years."""
+    ln = Line(key=key, label=label, gloss=gloss, per_share=per_share)
+
+    series = fcf_series(eq) if key == "fcf" else eq.series(key)
+    if len(series) < 4:
+        ln.problem = "too few filed years"
+        return ln
+
+    if per_share:
+        # Per-share figures are small and a three-year average would blunt
+        # the very trend being measured, so the latest filed year is used.
+        ln.now = series[-1][1]
+    else:
+        ln.now, _ = base_fcf(series)
+
+    ln.growth, ln.years = cagr(series)
+    if ln.growth is None:
+        ln.problem = "swung between profit and loss, so there is no rate"
+        return ln
+    if ln.now is None or ln.now <= 0:
+        ln.problem = "negative today, so there is nothing to grow"
+        return ln
+
+    g = ln.growth
+    if g > GROWTH_CAP:
+        g, ln.capped = GROWTH_CAP, True
+    elif g < GROWTH_FLOOR:
+        g, ln.capped = GROWTH_FLOOR, True
+    ln.growth = g
+    ln.end = ln.now * (1 + g) ** horizon
+    return ln
+
+
+def forecast_lines(eq, horizon: int = HORIZON) -> list[Line]:
+    """Sales, profit, earnings a share and cash flow, all carried forward."""
+    return [forecast_line(eq, k, lab, gl, ps, horizon)
+            for k, lab, gl, ps in LINES]
