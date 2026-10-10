@@ -222,6 +222,58 @@ DERIVED = "derived"
 # --------------------------------------------------------------------------
 
 
+# --------------------------------------------------------------------------
+# What people call companies, against what the SEC calls them
+# --------------------------------------------------------------------------
+# No amount of fuzzy matching gets from "google" to "Alphabet Inc." --
+# the word is not in the filed name at all. Same for Facebook, and for
+# every product people know better than the company behind it. A beginner
+# types the brand, so the brand has to be a way in.
+#
+# Kept short and only where ownership is not in doubt. A wrong entry here
+# sends someone confidently to the wrong company, which is worse than
+# finding nothing.
+BRANDS = {
+    "google": "GOOGL", "youtube": "GOOGL", "android": "GOOGL",
+    "gmail": "GOOGL", "waymo": "GOOGL", "google cloud": "GOOGL",
+    "facebook": "META", "instagram": "META", "whatsapp": "META",
+    "oculus": "META", "insta": "META",
+    "iphone": "AAPL", "ipad": "AAPL", "macbook": "AAPL",
+    "airpods": "AAPL", "apple watch": "AAPL",
+    "windows": "MSFT", "xbox": "MSFT", "azure": "MSFT",
+    "linkedin": "MSFT", "office": "MSFT", "copilot": "MSFT",
+    "aws": "AMZN", "kindle": "AMZN", "whole foods": "AMZN",
+    "twitch": "AMZN", "amazon prime": "AMZN",
+    "jordan": "NKE", "air jordan": "NKE", "converse": "NKE",
+    "geforce": "NVDA",
+    "gatorade": "PEP", "doritos": "PEP", "lays": "PEP",
+    "mountain dew": "PEP", "quaker": "PEP",
+    "sprite": "KO", "fanta": "KO", "minute maid": "KO", "coke": "KO",
+}
+
+
+def _brand_ticker(qn: str, raw: str) -> str | None:
+    """The ticker behind a brand name, forgiving of a typo in the brand.
+
+    Matched on the normalised query, so "googel" and "Google Inc" both
+    land. The threshold is tighter than the name search uses: a brand hit
+    jumps the queue, so it has to be nearly right to earn that.
+    """
+    low = raw.strip().lower()
+    if low in BRANDS:
+        return BRANDS[low]
+    if qn in BRANDS:
+        return BRANDS[qn]
+    if len(qn) < 4:
+        return None
+    best, score = None, 0.0
+    for brand, ticker in BRANDS.items():
+        r = SequenceMatcher(None, qn, _norm(brand)).ratio()
+        if r > score:
+            best, score = ticker, r
+    return best if score >= 0.82 else None
+
+
 class SecClient:
     """Fetches SEC data with on-disk caching."""
 
@@ -296,12 +348,14 @@ class SecClient:
         inner = re.compile(r"\b" + re.escape(q))
 
         exact, starts, contains, rest = [], [], [], []
+        by_ticker: dict[str, dict] = {}
         for row in data.values():
             entry = {
                 "ticker": row["ticker"].upper(),
                 "name": row["title"],
                 "cik": str(row["cik_str"]).zfill(10),
             }
+            by_ticker.setdefault(entry["ticker"], entry)
             ticker_l, name_l = entry["ticker"].lower(), entry["name"].lower()
             name_n = _norm(entry["name"])
             if ticker_l == q or _norm(entry["ticker"]) == qn:
@@ -322,16 +376,31 @@ class SecClient:
         contains.sort(key=lambda e: len(e["name"]))
         found = exact + starts + contains
 
+        # A brand goes to the front: someone typing "youtube" wants Alphabet
+        # first, not whichever filer happens to contain those letters.
+        brand = _brand_ticker(qn, raw)
+        if brand:
+            hit = by_ticker.get(brand)
+            if hit:
+                found = [hit] + [e for e in found if e["cik"] != hit["cik"]]
+
         # Fuzzy rescue for typos, only when the strict tiers are thin.
         if len(found) < 5 and len(qn) >= 4:
             scored = []
             for entry, name_n in rest:
-                if abs(len(name_n) - len(qn)) > max(8, len(qn)):
-                    continue  # cheap length filter before the costly compare
                 # Against the whole name, and against its first word. A
                 # transposition like "nkie" scores poorly against "nikeinc"
                 # but well against "nike", which is what was actually mistyped.
                 head = _norm(entry["name"].split()[0]) if entry["name"].split() else ""
+                # The length filter is a cheap way to skip the costly compare,
+                # but measured against the full name alone it threw away the
+                # head match it was meant to protect: "exon" sits ten
+                # characters from "exxonmobilcorp" and one from "exxon", and
+                # the first test alone lost Exxon entirely. A candidate is
+                # only skipped when both lengths are implausible.
+                if (abs(len(name_n) - len(qn)) > max(8, len(qn))
+                        and abs(len(head) - len(qn)) > max(4, len(qn))):
+                    continue
                 score = max(
                     SequenceMatcher(None, qn, name_n[: len(qn) + 4]).ratio(),
                     SequenceMatcher(None, qn, head).ratio() if head else 0.0,
