@@ -541,6 +541,111 @@ def test_split_break():
     print("split break ok")
 
 
+def test_reverse_dcf():
+    """The cash flow model, run backwards.
+
+    The one property that matters: the solver must invert the model
+    exactly. If it does not, every number on that page is quietly wrong in
+    a way nobody would catch by looking.
+    """
+    import dcf
+
+    # Round trip. Pick a growth rate, value it, solve back for the rate.
+    for g in (-0.30, -0.05, 0.0, 0.04, 0.12, 0.25, 0.55):
+        ev = dcf.value_at(g, 1_000.0, 0.09, 0.025)
+        back = dcf.implied_growth(ev, 1_000.0, 0.09, 0.025)
+        assert back is not None and abs(back - g) < 1e-6, (g, back)
+
+    # Value must rise with growth, or a bisection means nothing.
+    vals = [dcf.value_at(g / 100, 1_000.0, 0.09, 0.025)
+            for g in range(-40, 61, 5)]
+    assert all(b > a for a, b in zip(vals, vals[1:])), "not monotonic"
+
+    # A higher discount rate must imply more growth for the same price,
+    # and so must a lower terminal rate. Both are what the page claims.
+    ev = dcf.value_at(0.08, 1_000.0, 0.09, 0.025)
+    assert dcf.implied_growth(ev, 1_000.0, 0.11, 0.025) > 0.08
+    assert dcf.implied_growth(ev, 1_000.0, 0.09, 0.010) > 0.08
+
+    # Refusals, every one of which the page turns into a sentence.
+    assert dcf.implied_growth(1e15, 1_000.0, 0.09, 0.025) is None   # unreachable
+    assert dcf.implied_growth(10.0, 1_000.0, 0.09, 0.025) is None   # below floor
+    assert dcf.implied_growth(50_000.0, 1_000.0, 0.02, 0.025) is None  # r <= g
+    assert dcf.implied_growth(50_000.0, -500.0, 0.09, 0.025) is None   # burning
+
+    # Enterprise value: debt counts, cash counts against.
+    cap, net, ev2 = dcf.enterprise_value(50.0, 100.0, debt=2_000.0, cash=500.0)
+    assert (cap, net, ev2) == (5_000.0, 1_500.0, 6_500.0)
+    _, net2, _ = dcf.enterprise_value(50.0, 100.0, debt=0.0, cash=900.0)
+    assert net2 == -900.0, net2
+
+    # Lumpy capital spending must not set the whole projection.
+    lumpy = [("FY1", 900.0), ("FY2", 950.0), ("FY3", 100.0)]
+    base, n = dcf.base_fcf(lumpy)
+    assert n == 3 and abs(base - 650.0) < 1e-9, (base, n)
+
+    # Growth across the filed years, and the cases where it means nothing.
+    up = [(f"FY{i}", 100.0 * 1.1 ** i) for i in range(6)]
+    g, n = dcf.cagr(up)
+    assert g is not None and abs(g - 0.10) < 1e-9, g
+    assert dcf.cagr([("FY1", -50.0), ("FY2", 10.0), ("FY3", 20.0),
+                     ("FY4", 30.0)])[0] is None, "swing out of a loss"
+    assert dcf.cagr([("FY1", 10.0), ("FY2", 20.0)])[0] is None, "too few years"
+
+    # A bank is refused outright, whatever its numbers look like.
+    class FakeYear:
+        def __init__(self, fcf):
+            # $300 of free cash flow a year against a $5,000 company, so
+            # about seventeen times cash flow -- an ordinary multiple.
+            self.inputs = {"ocf": fcf + 100.0, "capex": 100.0}
+            self.label = "FY2025"
+
+        def get(self, k):
+            return self.inputs.get(k)
+
+    class FakeEq:
+        years = [FakeYear(300.0) for _ in range(6)]
+
+    bank = dcf.reverse(FakeEq(), price=50.0, shares=100.0, debt=0.0,
+                       cash=0.0, sic="6022")
+    assert not bank.available and "bank" in bank.problem.lower()
+
+    # The same company outside finance resolves to a number.
+    ok = dcf.reverse(FakeEq(), price=50.0, shares=100.0, debt=0.0,
+                     cash=0.0, sic="3570")
+    assert ok.available and ok.implied is not None
+    head, body = dcf.verdict(ok)
+    assert head and body
+
+    # No price means no question to answer.
+    assert not dcf.reverse(FakeEq(), price=None, shares=100.0, debt=0.0,
+                           cash=0.0, sic="3570").available
+
+    # A company priced below what its cash flow is worth in steep decline
+    # gets a stated reason, not a number pinned to the edge of the range.
+    class RichEq:
+        years = [FakeYear(4_500.0) for _ in range(6)]
+
+    cheap = dcf.reverse(RichEq(), price=50.0, shares=100.0, debt=0.0,
+                        cash=0.0, sic="3570")
+    assert not cheap.available and "decline" in cheap.problem
+
+    # And one burning cash is refused with a different reason again.
+    class BurnEq:
+        years = [FakeYear(-800.0) for _ in range(6)]
+
+    burn = dcf.reverse(BurnEq(), price=50.0, shares=100.0, debt=0.0,
+                       cash=0.0, sic="3570")
+    assert not burn.available and "more cash than it generated" in burn.problem
+
+    # The sensitivity row has to move, or it is decoration.
+    grid = dcf.sensitivity(ok)
+    got = [g for _, g in grid if g is not None]
+    assert len(got) >= 3 and got == sorted(got), got
+    assert got[-1] - got[0] > 0.01, "discount rate barely moved the answer"
+    print("reverse dcf ok")
+
+
 FAKE_10K = """
 <html><body>
 <table><tr><td>Item 1. Business</td><td>3</td></tr>
@@ -1373,6 +1478,7 @@ def main():
     test_history()
     test_split_only_prices()
     test_split_break()
+    test_reverse_dcf()
     test_surprises()
     test_news()
     test_rate_pacing()
