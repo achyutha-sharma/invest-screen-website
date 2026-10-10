@@ -616,6 +616,20 @@ div[data-testid="stHorizontalBlock"]:has(.peernav) .stButton button
   letter-spacing:.04em !important}
 
 
+/* the banner that says the annual figures are a year behind */
+.stale{display:flex;gap:.7rem;align-items:flex-start;
+  background:var(--warn-bg);border:1px solid rgba(240,196,106,.35);
+  border-left:3px solid var(--warn);border-radius:10px;
+  padding:.7rem .9rem;margin:.1rem 0 1rem}
+.stale .ic{color:var(--warn);font-size:.95rem;line-height:1.5;flex:0 0 auto}
+.stale p{margin:0;font-size:.82rem;line-height:1.55;color:var(--text-2)}
+.stale b{color:var(--warn);font-weight:700}
+.stale a{color:var(--warn);font-weight:700;text-decoration:none;
+  border-bottom:1px solid rgba(240,196,106,.45)}
+.stale a:hover{border-bottom-color:var(--warn)}
+@media (max-width:640px){.stale p{font-size:.78rem}}
+
+
 /* ------------------------------------------------------------------ *
  * Mobile
  * ------------------------------------------------------------------ */
@@ -2033,6 +2047,47 @@ st.markdown(f'<span class="tk">{E(ticker)}</span><h2 class="co">{E(eq.entity)}{d
             f'{" · " if prof.get("industry") else ""}CIK {E(cik)} · '
             f'{E(latest.label)} (year ended {E(latest.end.strftime("%b %Y"))}) '
             "· Form 10-K</p>", unsafe_allow_html=True)
+
+# --------------------------------------------------------------------------
+# When the annual report is a year behind
+# --------------------------------------------------------------------------
+# An annual report is always somewhat old -- it covers a year that has
+# already finished. But once nine months have passed the company has filed
+# two or three quarters since, and a reader looking at the annual figures is
+# looking at a picture the company itself has already updated. Saying so is
+# more useful than letting the date sit quietly in the subtitle.
+#
+# Measured in months rather than by comparing calendar years, because a
+# fiscal year ending in May is not behind just because the year number on it
+# is last year's.
+_today = date.today()
+_annual_age = ((_today.year - latest.end.year) * 12
+               + (_today.month - latest.end.month))
+
+if _annual_age >= 9:
+    # Every 10-Q this company has ever filed, newest first.
+    _edgar = (f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany"
+              f"&CIK={E(cik)}&type=10-Q&dateb=&owner=include&count=40")
+    _n = len(eq.quarters)
+    _word = ("no", "one", "two", "three", "four")[_n] if _n <= 4 else str(_n)
+
+    if _n:
+        _msg = (f"The annual figures on this page cover the year ended "
+                f"<b>{E(latest.end.strftime('%B %Y'))}</b>. "
+                f"{_word.capitalize()} quarter{'s' if _n != 1 else ''} "
+                f"{'have' if _n != 1 else 'has'} been filed since, and "
+                f"{'they are' if _n != 1 else 'it is'} newer than everything "
+                f"below. ")
+    else:
+        _msg = (f"The annual figures on this page cover the year ended "
+                f"<b>{E(latest.end.strftime('%B %Y'))}</b>, and no quarterly "
+                "report has appeared in the SEC's data since. ")
+
+    st.markdown(
+        '<div class="stale"><span class="ic">●</span><p>' + _msg
+        + f'<a href="{_edgar}" target="_blank" rel="noopener">'
+        "See every quarterly report on SEC EDGAR →</a></p></div>",
+        unsafe_allow_html=True)
 
 _views = ["Research", "Summary", "Compare", "Teach me"]
 # Looked up by name, not by position. This was a hard-coded 1, which meant
