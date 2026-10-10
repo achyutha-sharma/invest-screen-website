@@ -234,6 +234,21 @@ class PriceClient:
                 wait = cls.RATE_WINDOW - (now - cls._recent[0]) + 0.05
             time.sleep(min(wait, 2.0))
 
+    @classmethod
+    def budget_left(cls) -> int:
+        """How many more requests fit in this minute without waiting.
+
+        Anything optional should check this first. Going one request over
+        the allowance costs a full minute of sleeping, which is a terrible
+        trade for a decorative panel -- and it is paid by whoever happens
+        to load the page, not by the thing that overspent.
+        """
+        with cls._lock:
+            now = time.time()
+            cls._recent[:] = [t for t in cls._recent
+                              if now - t < cls.RATE_WINDOW]
+            return max(0, cls.RATE_LIMIT - len(cls._recent))
+
     def _get(self, url: str, params: dict):
         """Returns (json, problem). Never raises."""
         if not self.key:
