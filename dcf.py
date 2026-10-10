@@ -345,20 +345,245 @@ def verdict(r: Reverse) -> tuple[str, str]:
         "to have a view on.")
 
 
-def sensitivity(r: Reverse, rates: tuple = (0.07, 0.08, 0.09, 0.10, 0.11)
-                ) -> list[tuple[float, float | None]]:
-    """Implied growth at several discount rates.
+# --------------------------------------------------------------------------
+# The model run forwards
+# --------------------------------------------------------------------------
+# What the business is worth in ten years, if the rate it has actually
+# grown at carries on. Every input is drawn from the filings: the growth
+# rate is the company's own record, and the exit multiple is what the
+# market pays for its cash flow today. Nothing here is typed in by hand,
+# which is the only thing that makes a ten-year projection worth printing.
+#
+# It is still a projection. Companies revert to the mean, decades do not
+# repeat, and a rate sustained for ten years is rare. So this never shows
+# one number on its own -- it shows what happens at half that rate and at
+# half again more, and the spread between them is the real answer.
 
-    The honest companion to any single answer here. The discount rate is
-    chosen, not observed, so showing how much the conclusion moves with it
-    is the difference between a model and a number.
+# No company compounds cash flow at 40% for a decade. Rates above this are
+# used as the cap, and the page says the cap was applied.
+GROWTH_CAP = 0.25
+GROWTH_FLOOR = -0.10
+
+# A multiple outside this band says more about today's mood than about what
+# the business will fetch in ten years.
+MULTIPLE_MIN, MULTIPLE_MAX = 8.0, 30.0
+
+
+@dataclass
+class Projection:
+    """One scenario: a growth rate carried forward and valued at the end."""
+
+    name: str = ""
+    growth: float = 0.0
+    path: list[tuple[int, float]] = field(default_factory=list)
+    exit_multiple: float = 0.0
+    enterprise_end: float = 0.0
+    equity_end: float = 0.0
+    per_share_end: float = 0.0
+    annual_return: float | None = None
+    total_return: float | None = None
+
+
+@dataclass
+class Forecast:
+    """Three scenarios, the inputs behind them, or a reason there are none."""
+
+    base: Projection | None = None
+    slower: Projection | None = None
+    faster: Projection | None = None
+    fcf_now: float | None = None
+    base_years: int = 0
+    history: float | None = None
+    history_years: int = 0
+    rev_growth: float | None = None
+    price: float | None = None
+    shares: float | None = None
+    net_debt: float | None = None
+    exit_multiple: float | None = None
+    multiple_now: float | None = None
+    capped: bool = False
+    horizon: int = HORIZON
+    problem: str = ""
+    notes: list[str] = field(default_factory=list)
+
+    @property
+    def available(self) -> bool:
+        return self.base is not None
+
+
+def project(fcf: float, growth: float, multiple: float, shares: float,
+            net_debt: float, price: float | None, name: str = "",
+            horizon: int = HORIZON) -> Projection:
+    """Carry cash flow forward, then value what it has become.
+
+    Share count and net borrowings are held where they are. Both will
+    move -- buybacks shrink the count, debt gets repaid out of the very
+    cash flow being projected -- but guessing at either would add two more
+    invented numbers to a page whose whole claim is that it does not
+    invent any.
     """
-    if r.fcf_base is None or r.enterprise is None or r.fcf_base <= 0:
-        return []
-    out = []
-    for rate in rates:
-        if rate <= r.terminal:
-            continue
-        out.append((rate, implied_growth(r.enterprise, r.fcf_base, rate,
-                                         r.terminal, r.horizon)))
-    return out
+    path, cash = [], fcf
+    for year in range(1, horizon + 1):
+        cash *= (1 + growth)
+        path.append((year, cash))
+
+    ev_end = cash * multiple
+    eq_end = ev_end - net_debt
+    per_share = eq_end / shares if shares else 0.0
+
+    ann = tot = None
+    if price and price > 0 and per_share > 0:
+        tot = per_share / price - 1
+        ann = (per_share / price) ** (1 / horizon) - 1
+
+    return Projection(name=name, growth=growth, path=path,
+                      exit_multiple=multiple, enterprise_end=ev_end,
+                      equity_end=eq_end, per_share_end=per_share,
+                      annual_return=ann, total_return=tot)
+
+
+def forecast(eq, price: float | None, shares: float | None,
+             debt: float | None, cash: float | None, sic: str = "",
+             horizon: int = HORIZON) -> Forecast:
+    """Ten years forward at the rate this company has actually managed."""
+    f = Forecast(horizon=horizon)
+
+    try:
+        code = int(str(sic).strip()[:4] or 0)
+    except ValueError:
+        code = 0
+    if code in FINANCIAL_SIC:
+        f.problem = (
+            "This does not work on banks, insurers or property trusts. "
+            "Lending and deposits move enormous sums through operating cash "
+            "flow, so free cash flow for a financial company is not the "
+            "surplus it is everywhere else.")
+        return f
+
+    if not shares or shares <= 0:
+        f.problem = "The filings do not give a share count to divide by."
+        return f
+
+    series = fcf_series(eq)
+    if len(series) < 4:
+        f.problem = (
+            ("No free cash flow has been filed in a form these pages can "
+             "read — this company has not tagged operating cash flow and "
+             "capital spending."
+             if not series else
+             f"Only {len(series)} year{'s' if len(series) != 1 else ''} of "
+             "free cash flow have been filed.")
+            + " A ten-year projection needs a trend to project, and a "
+              "handful of years is not one.")
+        return f
+
+    base, n_base = base_fcf(series)
+    f.fcf_now, f.base_years = base, n_base
+    f.history, f.history_years = cagr(series)
+    rev = eq.series("revenue")
+    f.rev_growth, _ = cagr(rev)
+
+    if base is None or base <= 0:
+        f.problem = (
+            "This company spent more cash than it generated over the last "
+            f"{n_base} years, so there is no positive cash flow to carry "
+            "forward. That is common for a business investing heavily, and it "
+            "is exactly the case this kind of model cannot handle.")
+        return f
+
+    if f.history is None:
+        f.problem = (
+            "Free cash flow has swung between positive and negative across "
+            "the filed years, so there is no growth rate to project. A rate "
+            "measured from a loss-making start year would be arithmetic "
+            "noise rather than a trend.")
+        return f
+
+    g = f.history
+    if g > GROWTH_CAP:
+        g, f.capped = GROWTH_CAP, True
+        f.notes.append(
+            f"The filed record is {f.history * 100:.0f}% a year, which is held "
+            f"down to {GROWTH_CAP * 100:.0f}% here. Almost no company compounds "
+            "cash flow faster than that for a decade, and projecting the raw "
+            "rate would produce a number worth nothing.")
+    elif g < GROWTH_FLOOR:
+        g, f.capped = GROWTH_FLOOR, True
+        f.notes.append(
+            f"The filed record is {f.history * 100:.0f}% a year. A decline "
+            f"that steep compounded for {horizon} years leaves almost nothing, "
+            f"so it is held at {GROWTH_FLOOR * 100:.0f}%.")
+
+    net = (debt or 0.0) - (cash or 0.0)
+    f.price, f.shares, f.net_debt = price, shares, net
+
+    # What the market pays for this company's cash flow today, carried
+    # forward as what it will pay in ten years. Using the company's own
+    # multiple rather than a chosen one keeps the projection anchored to
+    # something observed -- but a multiple set by today's mood is the
+    # weakest link here, so it is held inside a sane band.
+    if price and price > 0:
+        ev_now = price * shares + net
+        f.multiple_now = ev_now / base if base else None
+    mult = f.multiple_now or 15.0
+    mult = max(MULTIPLE_MIN, min(MULTIPLE_MAX, mult))
+    f.exit_multiple = mult
+    if f.multiple_now and abs(mult - f.multiple_now) > 0.05:
+        f.notes.append(
+            f"The market pays {f.multiple_now:.0f} times cash flow for this "
+            f"company today. That is held to {mult:.0f} times for the "
+            "projection, because a multiple at today's extreme says more "
+            "about the present mood than about ten years from now.")
+
+    f.base = project(base, g, mult, shares, net, price,
+                     "If the record repeats", horizon)
+    f.slower = project(base, g / 2, mult, shares, net, price,
+                       "If growth halves", horizon)
+    f.faster = project(base, min(g * 1.5, GROWTH_CAP), mult, shares, net,
+                       price, "If growth improves", horizon)
+
+    f.notes.append(
+        f"Cash flow starts from the average of the last {n_base} filed years, "
+        "so one year of heavy building does not set the whole projection.")
+    f.notes.append(
+        "The share count and net borrowings are held where they are today. "
+        "Buybacks would raise the per-share figure and new shares would "
+        "lower it.")
+    return f
+
+
+def forecast_verdict(f: Forecast) -> tuple[str, str]:
+    """The headline sentence for a completed forecast."""
+    if not f.available or f.base is None:
+        return "", ""
+    b = f.base
+    if b.annual_return is None:
+        return "No share price to compare against", (
+            "The projection gives a value per share, but without a price "
+            "today there is nothing to measure a return from.")
+
+    ann = b.annual_return * 100
+    hist = f.history * 100 if f.history is not None else None
+    hint = (f" That rests on free cash flow growing {b.growth * 100:.0f}% a "
+            f"year, which is what it has done over {f.history_years} filed "
+            "years." if hist is not None else "")
+
+    if ann >= 15:
+        return "Well ahead of the market", (
+            f"Carrying the record forward, the shares work out at about "
+            f"{ann:.0f}% a year.{hint} A return that far above the market's "
+            "long-run average usually means the market disagrees with the "
+            "projection somewhere.")
+    if ann >= 8:
+        return "Around what the market has returned", (
+            f"Carrying the record forward gives about {ann:.0f}% a year, "
+            f"roughly what US shares have averaged over decades.{hint}")
+    if ann >= 0:
+        return "Below the market", (
+            f"Carrying the record forward gives about {ann:.0f}% a year, "
+            f"less than the market's long-run average.{hint} You would be "
+            "paying today for growth that mostly arrives anyway.")
+    return "The record does not justify today's price", (
+        f"Even carrying the filed growth forward for {f.horizon} years, the "
+        f"shares come out below today's price — about {ann:.0f}% a year."
+        f"{hint} The price is assuming something the record does not show.")
