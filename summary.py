@@ -183,3 +183,115 @@ def price_sentences(name: str, shape_: PriceShape | None, price: float | None,
         out.append(f"Month to month its price swings make it <b>{word}</b>.")
 
     return out
+
+
+# --------------------------------------------------------------------------
+# Against simply owning the market
+# --------------------------------------------------------------------------
+# The question a new investor almost never asks, and the one that matters
+# most: would I have done better just buying the index? Most individual
+# shares underperform it. A page that lays out one company's numbers
+# beautifully and never mentions the alternative is quietly teaching the
+# wrong instinct, so this sits on the summary and answers it in dollars.
+#
+# Both series are adjusted closes, dividends reinvested, so this compares
+# like with like. The window is the overlap between them: a company listed
+# four years ago is measured against four years of the index, not eleven.
+
+STAKE = 1_000.0
+MIN_OVERLAP_YEARS = 3.0
+
+
+@dataclass
+class Versus:
+    """One company against the index, over the years they share."""
+
+    years: float
+    start: str
+    end: str
+    stock_cagr: float
+    index_cagr: float
+    stock_end: float          # what the stake became
+    index_end: float
+    stake: float = STAKE
+
+    @property
+    def beat(self) -> bool:
+        return self.stock_cagr > self.index_cagr
+
+    @property
+    def gap(self) -> float:
+        return self.stock_cagr - self.index_cagr
+
+
+def _window(series, lo: str, hi: str):
+    """First and last points of a series inside [lo, hi]."""
+    inside = [(d, v) for d, v in series if lo <= d <= hi and v and v > 0]
+    return (inside[0], inside[-1]) if len(inside) >= 2 else None
+
+
+def versus_index(stock, index, stake: float = STAKE) -> Versus | None:
+    """How a stake in one company fared against the same stake in the index.
+
+    Returns None rather than a misleading figure when the two series do not
+    overlap for long enough to say anything.
+    """
+    if not stock or not index:
+        return None
+
+    lo = max(stock[0][0], index[0][0])
+    hi = min(stock[-1][0], index[-1][0])
+    if lo >= hi:
+        return None
+
+    a, b = _window(stock, lo, hi), _window(index, lo, hi)
+    if not a or not b:
+        return None
+
+    (s0_d, s0), (s1_d, s1) = a
+    (_, i0), (_, i1) = b
+
+    try:
+        years = (date.fromisoformat(s1_d) - date.fromisoformat(s0_d)).days / 365.25
+    except ValueError:
+        return None
+    if years < MIN_OVERLAP_YEARS:
+        return None
+
+    return Versus(
+        years=years, start=s0_d, end=s1_d,
+        stock_cagr=100 * ((s1 / s0) ** (1 / years) - 1),
+        index_cagr=100 * ((i1 / i0) ** (1 / years) - 1),
+        stock_end=stake * s1 / s0,
+        index_end=stake * i1 / i0,
+        stake=stake,
+    )
+
+
+def versus_sentences(name: str, v: Versus | None, money=str) -> list[str]:
+    """Two sentences: the numbers, then what they mean."""
+    if v is None:
+        return []
+
+    when = date.fromisoformat(v.end).strftime("%B %Y")
+    out = [
+        f"Over the <b>{v.years:.0f} years</b> to {when}, {name} returned "
+        f"<b>{v.stock_cagr:+,.1f}% a year</b>. The S&P 500 returned "
+        f"<b>{v.index_cagr:+,.1f}%</b>. {money(v.stake)} in each would be "
+        f"<b>{money(v.stock_end)}</b> against <b>{money(v.index_end)}</b>."
+    ]
+
+    if v.gap >= 2:
+        out.append("Owning this one beat owning the whole market — which most "
+                   "individual shares do not manage over a stretch that long.")
+    elif v.gap > -2:
+        out.append("That is close enough to call it a draw. The extra work of "
+                   "picking one company bought nothing here.")
+    else:
+        out.append("Buying the index instead would have done better, with no "
+                   "research and far less that could go wrong. That is the "
+                   "usual outcome for a single share, not an unusual one.")
+
+    out.append("Both figures include dividends, reinvested. Past returns say "
+               "nothing about future ones.")
+    return out
