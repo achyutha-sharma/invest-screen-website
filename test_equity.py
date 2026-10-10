@@ -588,6 +588,64 @@ amounts shown in the accompanying tables and discussion below.</p>
 """
 
 
+def test_versus_index():
+    """A company against simply owning the index, over the years they share."""
+    from datetime import date as _d
+    import summary as summ
+
+    def series(start, years, rate):
+        out, d, v = [], _d.fromisoformat(start), 100.0
+        for m in range(int(years * 12) + 1):
+            out.append((d.isoformat(), v * (1 + rate) ** (m / 12)))
+            y, mo = d.year + (d.month // 12), d.month % 12 + 1
+            d = _d(y, mo, min(d.day, 28))
+        return out
+
+    spy = series("2015-10-31", 11, 0.112)
+
+    # Rates must come back as filed, and the stake must compound with them.
+    beat = summ.versus_index(series("2015-10-31", 11, 0.18), spy)
+    assert beat is not None
+    assert abs(beat.stock_cagr - 18.0) < 0.2, beat.stock_cagr
+    assert abs(beat.index_cagr - 11.2) < 0.2, beat.index_cagr
+    assert beat.beat and beat.gap > 6
+    # The stake and the rate have to tell the same story.
+    assert abs(beat.stock_end
+               - beat.stake * (1 + beat.stock_cagr / 100) ** beat.years) < 0.01
+    assert abs(beat.index_end
+               - beat.stake * (1 + beat.index_cagr / 100) ** beat.years) < 0.01
+
+    lose = summ.versus_index(series("2015-10-31", 11, 0.02), spy)
+    assert not lose.beat and lose.index_end > lose.stock_end
+
+    # The window is the overlap: a company listed four years ago is measured
+    # against four years of the index, not eleven.
+    young = summ.versus_index(series("2022-10-31", 4, 0.30), spy)
+    assert young is not None and 3.5 < young.years < 4.5, young.years
+    assert abs(young.index_cagr - 11.2) < 0.5, young.index_cagr
+
+    # Too little overlap says nothing rather than something misleading.
+    assert summ.versus_index(series("2025-10-31", 1, 0.30), spy) is None
+    assert summ.versus_index([], spy) is None
+    assert summ.versus_index(spy, []) is None
+    # No overlap at all.
+    assert summ.versus_index(series("1990-01-31", 5, 0.1), spy) is None
+
+    # Each outcome gets its own closing line, and every one is honest about
+    # dividends being included.
+    for s_, want in ((series("2015-10-31", 11, 0.18), "beat owning"),
+                     (series("2015-10-31", 11, 0.02), "Buying the index"),
+                     (series("2015-10-31", 11, 0.112), "draw")):
+        lines = summ.versus_sentences("Co", summ.versus_index(s_, spy))
+        assert len(lines) == 3, lines
+        assert want in lines[1], (want, lines[1])
+        assert "include dividends" in lines[2]
+
+    # Nothing to say is said as nothing, not as an empty panel.
+    assert summ.versus_sentences("Co", None) == []
+    print("versus index ok")
+
+
 def test_filing_text():
     from filing_text import extract_competitors, extract_mda, extract_risks, to_text
 
@@ -1376,6 +1434,7 @@ def main():
     test_surprises()
     test_news()
     test_rate_pacing()
+    test_versus_index()
     test_filing_text()
     test_risk_junk_rejected()
     test_span_picks_real_section()
