@@ -996,6 +996,62 @@ def test_quarter_labels_by_fiscal_month():
     print("fiscal quarter labels ok")
 
 
+def test_quarter_fiscal_year():
+    """Every quarter of one fiscal year carries that year's number.
+
+    The fiscal year used to be the calendar year the quarter ended in, which
+    is right only for December filers. A company closing its year in May
+    files Q1 in August and Q3 the following February, so the three quarters
+    of a single fiscal year came out as "Q1 FY2025", "Q2 FY2025" and
+    "Q3 FY2026" -- a year that appeared to change halfway through.
+    """
+    def filer(annual_start, annual_end, qs):
+        rows = [dur(annual_start, annual_end, 16_000)]
+        for start, end, val in qs:
+            rows.append(dur(start, end, val, form="10-Q", filed=end))
+        return extract_equity(build("FISCAL CO", {
+            "Revenues": {"units": {"USD": rows}},
+            "NetIncomeLoss": {"units": {"USD": [
+                dur(annual_start, annual_end, 1_600)]}},
+        }))
+
+    # May year end: the year ending May 2026 is FY2026, and so are all three
+    # of its filed quarters -- two of which fall in calendar 2025.
+    may = filer("2024-06-01", "2025-05-31", [
+        ("2025-06-01", "2025-08-31", 4_000),
+        ("2025-09-01", "2025-11-30", 4_120),
+        ("2025-12-01", "2026-02-28", 4_240),
+    ])
+    assert [p.label for p in may.quarters] == \
+        ["Q1 FY2026", "Q2 FY2026", "Q3 FY2026"], [p.label for p in may.quarters]
+
+    # September year end: Q1 ends in December, a calendar year before the
+    # fiscal year it belongs to closes.
+    sep = filer("2024-10-01", "2025-09-30", [
+        ("2025-10-01", "2025-12-31", 4_000),
+        ("2026-01-01", "2026-03-31", 4_120),
+    ])
+    assert [p.label for p in sep.quarters] == ["Q1 FY2026", "Q2 FY2026"], \
+        [p.label for p in sep.quarters]
+
+    # December year end: unchanged, the case that was always right.
+    dec = filer("2025-01-01", "2025-12-31", [
+        ("2026-01-01", "2026-03-31", 4_000),
+        ("2026-04-01", "2026-06-30", 4_120),
+        ("2026-07-01", "2026-09-30", 4_240),
+        ("2026-10-01", "2026-12-31", 4_360),
+    ])
+    assert [p.label for p in dec.quarters] == \
+        ["Q1 FY2026", "Q2 FY2026", "Q3 FY2026", "Q4 FY2026"], \
+        [p.label for p in dec.quarters]
+
+    # Whatever the calendar, one fiscal year means one number.
+    for eq_ in (may, sep, dec):
+        assert len({p.fy for p in eq_.quarters}) == 1, \
+            [p.label for p in eq_.quarters]
+    print("quarter fiscal year ok")
+
+
 
 
 def test_surprises():
@@ -1194,6 +1250,7 @@ def main():
     test_quarters_from_ytd()
     test_never_more_than_four_quarters()
     test_quarter_labels_by_fiscal_month()
+    test_quarter_fiscal_year()
     print("\nAll checks passed.")
 
 
