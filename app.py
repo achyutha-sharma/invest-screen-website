@@ -2393,6 +2393,57 @@ if mode == "Teach me":
       [data-baseweb="slider"] div[data-testid="stSliderThumbValue"]{color:var(--teach) !important}
       .stButton button{border-color:var(--teach-dim) !important}
       .stButton button:hover{border-color:var(--teach) !important;color:var(--teach) !important}
+
+      /* ---- step navigation -------------------------------------------
+         Without this the Back/Next pair inherits the metric-card styling,
+         because both sit in a column row: tiny uppercase letter-spaced
+         text, left-aligned, in a box that gives no sense of direction.
+         Here they are a proper pair — Back quiet, Next filled, each
+         naming the step it leads to.                                    */
+      .tnav{display:none}
+      div[data-testid="stHorizontalBlock"]:has(.tnav){
+        margin-top:1.3rem;gap:.7rem !important;align-items:stretch}
+      /* the hidden marker sits in its own slot; collapse the column gap
+         so it adds no height and the two buttons stay level */
+      div[data-testid="stHorizontalBlock"]:has(.tnav)
+        div[data-testid="stVerticalBlock"]{gap:0 !important}
+      div[data-testid="stHorizontalBlock"]:has(.tnav) .stButton button{
+        display:flex !important;flex-direction:column !important;
+        justify-content:center !important;gap:.12rem !important;
+        min-height:3.5rem !important;height:100% !important;
+        padding:.55rem 1rem !important;border-radius:11px !important;
+        background:var(--surf) !important;border:1px solid var(--line-2) !important;
+        white-space:normal;transition:border-color .15s,background .15s}
+      div[data-testid="stHorizontalBlock"]:has(.tnav) .stButton button p{
+        text-transform:none !important;letter-spacing:0 !important;
+        margin:0 !important;line-height:1.3 !important;text-align:inherit}
+      div[data-testid="stHorizontalBlock"]:has(.tnav) .stButton button
+        p:first-of-type{font-size:.84rem !important;font-weight:700 !important;
+        color:var(--text) !important}
+      div[data-testid="stHorizontalBlock"]:has(.tnav) .stButton button
+        p:nth-of-type(2){font-size:.69rem !important;font-weight:500 !important;
+        color:var(--text-3) !important}
+      /* back reads leftwards, forward rightwards */
+      div[data-testid="stHorizontalBlock"]:has(.tnav)
+        div[data-testid="stColumn"]:first-child .stButton button{
+        align-items:flex-start !important;text-align:left}
+      div[data-testid="stHorizontalBlock"]:has(.tnav)
+        div[data-testid="stColumn"]:last-child .stButton button{
+        align-items:flex-end !important;text-align:right;
+        background:rgba(79,201,140,.1) !important;
+        border-color:var(--teach-dim) !important}
+      div[data-testid="stHorizontalBlock"]:has(.tnav)
+        div[data-testid="stColumn"]:last-child .stButton button p:first-of-type{
+        color:var(--teach-2) !important}
+      div[data-testid="stHorizontalBlock"]:has(.tnav)
+        .stButton button:hover:not(:disabled){
+        border-color:var(--teach) !important;background:var(--surf-2) !important}
+      div[data-testid="stHorizontalBlock"]:has(.tnav)
+        div[data-testid="stColumn"]:last-child .stButton button:hover{
+        background:rgba(79,201,140,.18) !important}
+      /* step 1 keeps Back in place, greyed, so Next never jumps sideways */
+      div[data-testid="stHorizontalBlock"]:has(.tnav) .stButton button:disabled{
+        opacity:.3 !important;cursor:default}
     </style>""", unsafe_allow_html=True)
     step = st.session_state.get("step", 0)
     n = len(TEACH_TITLES)
@@ -2406,13 +2457,33 @@ if mode == "Teach me":
                 px_hist=[(lab, hist_px[lab]) for lab in
                          [p.label for p in eq.years] if lab in hist_px])
 
-    back, fwd, _ = st.columns([1, 1, 3])
-    if step > 0 and back.button("Back"):
-        st.session_state["step"] = step - 1
-        st.rerun()
-    if step < n - 1 and fwd.button("Next"):
-        st.session_state["step"] = step + 1
-        st.rerun()
+    # Each button names the step it leads to, so you can see where you are
+    # going before you click. Back stays on screen at step 1, disabled, so
+    # Next never slides across the screen between steps.
+    back, fwd = st.columns(2)
+
+    with back:
+        st.markdown('<div class="tnav"></div>', unsafe_allow_html=True)
+        if st.button(
+                "←  Back\n\n" + (TEACH_TITLES[step - 1] if step else "You are at the start"),
+                key="t_back", disabled=step == 0, use_container_width=True):
+            st.session_state["step"] = step - 1
+            st.rerun()
+
+    with fwd:
+        st.markdown('<div class="tnav"></div>', unsafe_allow_html=True)
+        if step < n - 1:
+            if st.button(f"Next  →\n\n{TEACH_TITLES[step + 1]}",
+                         key="t_next", use_container_width=True):
+                st.session_state["step"] = step + 1
+                st.rerun()
+        # The last step is the quiz. Without this you finish it and sit there
+        # with nowhere to go but backwards.
+        elif st.button("Done  ✓\n\nBack to the numbers",
+                       key="t_done", use_container_width=True):
+            st.session_state["mode"] = "Research"
+            st.session_state["step"] = 0
+            st.rerun()
 
     st.markdown('<p class="disc">Every figure comes from filings made to the U.S. Securities '
                 "and Exchange Commission. Educational only — not advice to buy or sell "
@@ -2765,9 +2836,11 @@ elif eq.quarters:
         # reason is worth knowing: they are not measuring the same thing.
         if q_eps is not None and abs(est["actual"] - q_eps) > 0.01:
             with st.expander("Why this differs from the EPS above"):
+                # Escaped: a pair of bare dollar signs in plain markdown is
+                # read as a LaTeX expression, which eats the text between them.
                 st.markdown(
-                    f"The filing reports **{DH}{q_eps:,.2f}** for this quarter. "
-                    f"Analysts compare against **{DH}{est['actual']:,.2f}**.\n\n"
+                    f"The filing reports **\\{DH}{q_eps:,.2f}** for this quarter. "
+                    f"Analysts compare against **\\{DH}{est['actual']:,.2f}**.\n\n"
                     "**They are different measures.** The filing figure follows "
                     "accounting rules and includes everything — restructuring charges, "
                     "legal settlements, writedowns, one-off gains. The analyst figure "
