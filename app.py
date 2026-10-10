@@ -15,7 +15,6 @@ import streamlit as st
 
 from datetime import date
 
-import expectations as expect
 from filing_text import latest_filings, read_filing
 import summary as summ
 from peers import suggest
@@ -1344,9 +1343,12 @@ if st.session_state.get("fund"):
                    "as a charge you pay — it simply lowers the return. Over decades it "
                    "is the one cost a holder can control.")
 
-    _fshape = summ.shape(hist) if "hist" in dir() else None
-    if _fshape is None:
-        _fshape = summ.shape(prices.monthly(fd.ticker) if prices.has_history else [])
+    # Fetched once here and reused by the chart further down. This used to
+    # test `"hist" in dir()`, which is always false at this point because the
+    # only other assignment is a local inside a helper -- so the history was
+    # pulled twice on every fund page.
+    hist = prices.monthly(fd.ticker) if prices.has_history else []
+    _fshape = summ.shape(hist)
     _flines = summ.price_sentences(
         fd.name, _fshape,
         fq.price if fq.available else None,
@@ -1373,7 +1375,6 @@ if st.session_state.get("fund"):
                 + "".join(f"<p>{E(x)}</p>" for x in fd.moves_down) + "</div>"
                 + "</div>", unsafe_allow_html=True)
 
-    hist = prices.monthly(fd.ticker) if prices.has_history else []
     if len(hist) >= 12:
         sh("How it has moved", f"{hist[0][0][:4]} to {hist[-1][0][:4]}")
         price_chart(hist, fd.name)
@@ -1633,7 +1634,16 @@ try:
     with st.spinner("Reading filings"):
         eq = extract_equity(facts(cik), cik=cik)
 except ValueError as e:
+    # A filer whose facts file has nothing usable in it. This used to stop
+    # here with a warning and no button, which left the reader on a page
+    # with no way back except the browser's own back arrow.
     st.warning(str(e))
+    # Back to the result list, not to the home screen: the reader was part way
+    # through choosing and should not have to retype the search.
+    if st.button("← Search again", key="again_novalues"):
+        for k in ("cik", "ticker", "name"):
+            st.session_state.pop(k, None)
+        st.rerun()
     st.stop()
 except Exception as e:
     if "404" in str(e):
@@ -1959,8 +1969,15 @@ _views = ["Research", "Summary", "Compare", "Teach me"]
 # Looked up by name, not by position. This was a hard-coded 1, which meant
 # "Teach me" until Compare was added in the middle and the glossary link
 # started opening the wrong view.
-_want = (_views.index("Teach me")
-         if st.session_state.pop("goto_teach", False) else None)
+#
+# Anything that wants to switch view sets goto_view and reruns. It cannot
+# write st.session_state["mode"] directly: that is the radio's own key, and
+# Streamlit raises once the widget has been drawn. Clearing the key here,
+# before the radio is created, is what makes the jump legal.
+_jump = st.session_state.pop("goto_view", None)
+if st.session_state.pop("goto_teach", False):
+    _jump = "Teach me"
+_want = _views.index(_jump) if _jump in _views else None
 if _want is not None:
     st.session_state.pop("mode", None)
 mode = st.radio("View", _views, index=_want if _want is not None else 0,
@@ -2240,9 +2257,6 @@ if mode == "Compare":
                 peps_growth = _yoy("eps")
                 pnext = next_estimate(h["ticker"])
                 pl_all = peq.years
-                def _ser(key):
-                    return [p.get(key) for p in pl_all if p.get(key) is not None]
-
                 pebitda = None
                 if pl.get("ebit") is not None:
                     pebitda = pl.get("ebit") + (pl.get("da") or 0)
@@ -2481,7 +2495,7 @@ if mode == "Teach me":
         # with nowhere to go but backwards.
         elif st.button("Done  ✓\n\nBack to the numbers",
                        key="t_done", use_container_width=True):
-            st.session_state["mode"] = "Research"
+            st.session_state["goto_view"] = "Research"
             st.session_state["step"] = 0
             st.rerun()
 
