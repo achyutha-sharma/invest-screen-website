@@ -1424,6 +1424,32 @@ WATCHLIST = [
     "T", "VZ", "TMUS", "CMCSA",
 ]
 
+# How many of them to quote on one page load.
+#
+# The feed allows 55 requests a minute and going one over costs a full
+# minute of waiting, not a refusal. Quoting the whole list took 54, the
+# market strip took 3, and 57 fell off that cliff: the home page sat for
+# sixty seconds before it drew, and anything the reader did next waited
+# too, because the minute's allowance was already spent.
+#
+# So only a slice is quoted, and the slice rotates with the cache window.
+# Every name still gets its turn across the day, and no single load spends
+# more than half the allowance.
+QUOTE_BUDGET = 24
+
+
+def watch_slice(tickers: list, size: int = QUOTE_BUDGET) -> list:
+    """A rotating window over the watchlist, advancing each cache window."""
+    import time as _time
+
+    if len(tickers) <= size:
+        return list(tickers)
+    start = (int(_time.time() // 1_800) * size) % len(tickers)
+    out = list(tickers[start:start + size])
+    if len(out) < size:
+        out += list(tickers[:size - len(out)])
+    return out
+
 
 @st.cache_data(show_spinner=False, ttl=1_800)
 def biggest_moves(tickers: tuple, market_pct: float | None):
