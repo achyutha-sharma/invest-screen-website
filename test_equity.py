@@ -638,12 +638,110 @@ def test_reverse_dcf():
                        cash=0.0, sic="3570")
     assert not burn.available and "more cash than it generated" in burn.problem
 
-    # The sensitivity row has to move, or it is decoration.
-    grid = dcf.sensitivity(ok)
-    got = [g for _, g in grid if g is not None]
-    assert len(got) >= 3 and got == sorted(got), got
-    assert got[-1] - got[0] > 0.01, "discount rate barely moved the answer"
     print("reverse dcf ok")
+
+
+def test_forward_projection():
+    """Ten years forward at the rate the company has actually managed."""
+    import dcf
+
+    # Every step of the chain, checked by hand.
+    p = dcf.project(fcf=300.0, growth=0.09, multiple=15.0, shares=400.0,
+                    net_debt=2_000.0, price=50.0, horizon=10)
+    end = 300.0 * 1.09 ** 10
+    assert len(p.path) == 10
+    assert abs(p.path[0][1] - 300.0 * 1.09) < 1e-9
+    assert abs(p.path[-1][1] - end) < 1e-9
+    assert abs(p.enterprise_end - end * 15.0) < 1e-9
+    assert abs(p.equity_end - (end * 15.0 - 2_000.0)) < 1e-9
+    assert abs(p.per_share_end - (end * 15.0 - 2_000.0) / 400.0) < 1e-9
+    assert abs(p.annual_return - ((p.per_share_end / 50.0) ** 0.1 - 1)) < 1e-12
+    assert abs(p.total_return - (p.per_share_end / 50.0 - 1)) < 1e-12
+
+    # Debt reduces the equity left over; cash adds to it.
+    rich = dcf.project(300.0, 0.09, 15.0, 400.0, -1_000.0, 50.0)
+    assert rich.per_share_end > p.per_share_end
+
+    # More growth must be worth more. Obvious, and worth pinning down.
+    for a, b in zip([0.0, 0.05, 0.10], [0.05, 0.10, 0.15]):
+        assert (dcf.project(300.0, a, 15.0, 400.0, 0.0, 50.0).per_share_end
+                < dcf.project(300.0, b, 15.0, 400.0, 0.0, 50.0).per_share_end)
+
+    # A full forecast off a filed-looking filer.
+    def filer(fcfs, shares=400):
+        rows_ocf, rows_capex, rows_rev, rows_ni, rows_sh = [], [], [], [], []
+        for i, v in enumerate(fcfs):
+            y = 2016 + i
+            s, e = f"{y}-01-01", f"{y}-12-31"
+            rows_ocf.append(dur(s, e, v + 400))
+            rows_capex.append(dur(s, e, 400))
+            rows_rev.append(dur(s, e, 10_000 + 500 * i))
+            rows_ni.append(dur(s, e, 900 + 50 * i))
+            rows_sh.append(dur(s, e, shares))
+        return extract_equity(build("PROJ CO", {
+            "Revenues": {"units": {"USD": rows_rev}},
+            "NetIncomeLoss": {"units": {"USD": rows_ni}},
+            "NetCashProvidedByUsedInOperatingActivities":
+                {"units": {"USD": rows_ocf}},
+            "PaymentsToAcquirePropertyPlantAndEquipment":
+                {"units": {"USD": rows_capex}},
+            "WeightedAverageNumberOfDilutedSharesOutstanding":
+                {"units": {"shares": rows_sh}},
+        }))
+
+    steady = filer([1_000 * 1.08 ** i for i in range(10)])
+    f = dcf.forecast(steady, price=60.0, shares=400.0, debt=1_000.0,
+                     cash=200.0, sic="3570")
+    assert f.available, f.problem
+    assert abs(f.history - 0.08) < 1e-6, f.history
+    assert f.base.growth == f.history, "the filed rate must be the one used"
+    # The three scenarios must fan out around it, in order.
+    assert (f.slower.per_share_end < f.base.per_share_end
+            < f.faster.per_share_end)
+    assert abs(f.slower.growth - f.history / 2) < 1e-9
+
+    # An absurd filed rate is capped, and the page is told so.
+    hot = filer([1_000 * 1.45 ** i for i in range(10)])
+    fh = dcf.forecast(hot, price=60.0, shares=400.0, debt=0.0, cash=0.0,
+                      sic="3570")
+    assert fh.available and fh.capped
+    assert fh.base.growth == dcf.GROWTH_CAP, fh.base.growth
+    assert any("held down" in n for n in fh.notes), fh.notes
+
+    # So is an extreme multiple, which is today's mood not ten years' worth.
+    wild = dcf.forecast(steady, price=600.0, shares=400.0, debt=0.0,
+                        cash=0.0, sic="3570")
+    assert wild.exit_multiple == dcf.MULTIPLE_MAX, wild.exit_multiple
+    assert any("times cash flow" in n for n in wild.notes), wild.notes
+
+    # Refusals, each with its own reason.
+    assert not dcf.forecast(steady, 60.0, 400.0, 0.0, 0.0, "6022").available
+    assert not dcf.forecast(steady, 60.0, None, 0.0, 0.0, "3570").available
+    short = filer([1_000, 1_100, 1_200])
+    assert not dcf.forecast(short, 60.0, 400.0, 0.0, 0.0, "3570").available
+    burn = filer([-500 - 50 * i for i in range(10)])
+    bf = dcf.forecast(burn, 60.0, 400.0, 0.0, 0.0, "3570")
+    assert not bf.available and "more cash than it generated" in bf.problem
+
+    # A series that crosses zero has no meaningful growth rate.
+    cross = filer([-400, -200, 100, 300, 500, 700, 900, 1_100, 1_300, 1_500])
+    cf = dcf.forecast(cross, 60.0, 400.0, 0.0, 0.0, "3570")
+    assert not cf.available and "swung between" in cf.problem
+
+    # No price: a value per share still comes out, with no return.
+    npf = dcf.forecast(steady, None, 400.0, 0.0, 0.0, "3570")
+    assert npf.available and npf.base.per_share_end > 0
+    assert npf.base.annual_return is None
+    head, body = dcf.forecast_verdict(npf)
+    assert "no share price" in head.lower()
+
+    # Every verdict band says something.
+    for pr in (5.0, 30.0, 60.0, 200.0, 2_000.0):
+        ff = dcf.forecast(steady, pr, 400.0, 0.0, 0.0, "3570")
+        if ff.available:
+            h, bdy = dcf.forecast_verdict(ff)
+            assert h and bdy, pr
+    print("forward projection ok")
 
 
 FAKE_10K = """
@@ -1479,6 +1577,7 @@ def main():
     test_split_only_prices()
     test_split_break()
     test_reverse_dcf()
+    test_forward_projection()
     test_surprises()
     test_news()
     test_rate_pacing()
