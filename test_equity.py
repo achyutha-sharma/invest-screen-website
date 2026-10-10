@@ -641,126 +641,6 @@ def test_reverse_dcf():
     print("reverse dcf ok")
 
 
-def test_forward_projection():
-    """Ten years forward at the rate the company has actually managed."""
-    import dcf
-
-    # Every step of the chain, checked by hand.
-    p = dcf.project(fcf=300.0, growth=0.09, multiple=15.0, shares=400.0,
-                    net_debt=2_000.0, price=50.0, horizon=10)
-    end = 300.0 * 1.09 ** 10
-    assert len(p.path) == 10
-    assert abs(p.path[0][1] - 300.0 * 1.09) < 1e-9
-    assert abs(p.path[-1][1] - end) < 1e-9
-    assert abs(p.enterprise_end - end * 15.0) < 1e-9
-    assert abs(p.equity_end - (end * 15.0 - 2_000.0)) < 1e-9
-    assert abs(p.per_share_end - (end * 15.0 - 2_000.0) / 400.0) < 1e-9
-    assert abs(p.annual_return - ((p.per_share_end / 50.0) ** 0.1 - 1)) < 1e-12
-    assert abs(p.total_return - (p.per_share_end / 50.0 - 1)) < 1e-12
-
-    # Debt reduces the equity left over; cash adds to it.
-    rich = dcf.project(300.0, 0.09, 15.0, 400.0, -1_000.0, 50.0)
-    assert rich.per_share_end > p.per_share_end
-
-    # More growth must be worth more. Obvious, and worth pinning down.
-    for a, b in zip([0.0, 0.05, 0.10], [0.05, 0.10, 0.15]):
-        assert (dcf.project(300.0, a, 15.0, 400.0, 0.0, 50.0).per_share_end
-                < dcf.project(300.0, b, 15.0, 400.0, 0.0, 50.0).per_share_end)
-
-    # A full forecast off a filed-looking filer.
-    def filer(fcfs, shares=400):
-        rows_ocf, rows_capex, rows_rev, rows_ni, rows_sh = [], [], [], [], []
-        for i, v in enumerate(fcfs):
-            y = 2016 + i
-            s, e = f"{y}-01-01", f"{y}-12-31"
-            rows_ocf.append(dur(s, e, v + 400))
-            rows_capex.append(dur(s, e, 400))
-            rows_rev.append(dur(s, e, 10_000 + 500 * i))
-            rows_ni.append(dur(s, e, 900 + 50 * i))
-            rows_sh.append(dur(s, e, shares))
-        return extract_equity(build("PROJ CO", {
-            "Revenues": {"units": {"USD": rows_rev}},
-            "NetIncomeLoss": {"units": {"USD": rows_ni}},
-            "NetCashProvidedByUsedInOperatingActivities":
-                {"units": {"USD": rows_ocf}},
-            "PaymentsToAcquirePropertyPlantAndEquipment":
-                {"units": {"USD": rows_capex}},
-            "WeightedAverageNumberOfDilutedSharesOutstanding":
-                {"units": {"shares": rows_sh}},
-        }))
-
-    steady = filer([1_000 * 1.08 ** i for i in range(10)])
-    f = dcf.forecast(steady, price=60.0, shares=400.0, debt=1_000.0,
-                     cash=200.0, sic="3570")
-    assert f.available, f.problem
-    assert abs(f.history - 0.08) < 1e-6, f.history
-    assert f.base.growth == f.history, "the filed rate must be the one used"
-    # The three scenarios must fan out around it, in order.
-    assert (f.slower.per_share_end < f.base.per_share_end
-            < f.faster.per_share_end)
-    assert abs(f.slower.growth - f.history / 2) < 1e-9
-
-    # An absurd filed rate is capped, and the page is told so.
-    hot = filer([1_000 * 1.45 ** i for i in range(10)])
-    fh = dcf.forecast(hot, price=60.0, shares=400.0, debt=0.0, cash=0.0,
-                      sic="3570")
-    assert fh.available and fh.capped
-    assert fh.base.growth == dcf.GROWTH_CAP, fh.base.growth
-    assert any("held down" in n for n in fh.notes), fh.notes
-
-    # So is an extreme multiple, which is today's mood not ten years' worth.
-    wild = dcf.forecast(steady, price=600.0, shares=400.0, debt=0.0,
-                        cash=0.0, sic="3570")
-    assert wild.exit_multiple == dcf.MULTIPLE_MAX, wild.exit_multiple
-    assert any("times cash flow" in n for n in wild.notes), wild.notes
-
-    # Refusals, each with its own reason.
-    assert not dcf.forecast(steady, 60.0, 400.0, 0.0, 0.0, "6022").available
-    assert not dcf.forecast(steady, 60.0, None, 0.0, 0.0, "3570").available
-    short = filer([1_000, 1_100, 1_200])
-    assert not dcf.forecast(short, 60.0, 400.0, 0.0, 0.0, "3570").available
-    burn = filer([-500 - 50 * i for i in range(10)])
-    bf = dcf.forecast(burn, 60.0, 400.0, 0.0, 0.0, "3570")
-    assert not bf.available and "more cash than it generated" in bf.problem
-
-    # A series that crosses zero has no meaningful growth rate.
-    cross = filer([-400, -200, 100, 300, 500, 700, 900, 1_100, 1_300, 1_500])
-    cf = dcf.forecast(cross, 60.0, 400.0, 0.0, 0.0, "3570")
-    assert not cf.available and "swung between" in cf.problem
-
-    # No price: a value per share still comes out, with no return.
-    npf = dcf.forecast(steady, None, 400.0, 0.0, 0.0, "3570")
-    assert npf.available and npf.base.per_share_end > 0
-    assert npf.base.annual_return is None
-    head, body = dcf.forecast_verdict(npf)
-    assert "no price" in head.lower(), head
-
-    # Every verdict band says something.
-    for pr in (5.0, 30.0, 60.0, 200.0, 2_000.0):
-        ff = dcf.forecast(steady, pr, 400.0, 0.0, 0.0, "3570")
-        if ff.available:
-            h, bdy = dcf.forecast_verdict(ff)
-            assert h and bdy, pr
-
-    # "Better" must be better, including for a company in decline.
-    #
-    # The scenarios used to be a multiple of the filed rate, so a company
-    # shrinking 2.5% a year had its "if growth improves" row showing
-    # -3.8% -- a steeper fall than the base case. The table read backwards
-    # for exactly the companies where the question matters most.
-    falling = filer([1_000 * 0.975 ** i for i in range(10)])
-    fd = dcf.forecast(falling, price=20.0, shares=400.0, debt=0.0,
-                      cash=0.0, sic="3570")
-    assert fd.available and fd.history < 0, fd.history
-    assert fd.slower.growth < fd.base.growth < fd.faster.growth, (
-        fd.slower.growth, fd.base.growth, fd.faster.growth)
-    assert (fd.slower.per_share_end < fd.base.per_share_end
-            < fd.faster.per_share_end)
-    # The same ordering must hold for a grower.
-    assert f.slower.growth < f.base.growth < f.faster.growth
-    print("forward projection ok")
-
-
 def test_forecast_lines():
     """Sales, profit and earnings projected beside cash flow.
 
@@ -835,6 +715,98 @@ def test_forecast_lines():
     assert sl["net_income"].end is None and sl["net_income"].problem
     assert sl["revenue"].end is not None
     print("forecast lines ok")
+
+
+def test_dcf_valuation():
+    """Forecast, discount, value — the three steps, checked by hand.
+
+    This is the sum a reader is being shown, so every stage of it has to
+    reconcile: the discount factors, the terminal value, the enterprise
+    value and what is left for shareholders.
+    """
+    import dcf
+
+    class Y:
+        def __init__(self, fcf):
+            self.inputs = {"ocf": fcf + 10.0, "capex": 10.0}
+            self.label = "FY"
+
+        def get(self, k):
+            return self.inputs.get(k)
+
+    class Flat:
+        years = [Y(100.0) for _ in range(6)]
+
+    v = dcf.valuation(Flat(), price=50.0, shares=100.0, debt=0.0, cash=0.0,
+                      sic="3570", discount=0.10, terminal_growth=0.025)
+    assert v.available and abs(v.growth) < 1e-12, v.growth
+    assert len(v.steps) == dcf.FORECAST_YEARS
+
+    # Each year discounted at 1/(1+r)^t, and nothing else.
+    for s_ in v.steps:
+        assert abs(s_.factor - 1 / 1.10 ** s_.year) < 1e-12, s_
+        assert abs(s_.present - s_.cash * s_.factor) < 1e-9, s_
+    assert abs(v.pv_forecast - sum(100.0 / 1.10 ** t for t in range(1, 6))) < 1e-9
+
+    # Gordon growth on the final year, discounted back.
+    tv = 100.0 * 1.025 / (0.10 - 0.025)
+    assert abs(v.terminal - tv) < 1e-9, v.terminal
+    assert abs(v.pv_terminal - tv / 1.10 ** 5) < 1e-9
+
+    assert abs(v.enterprise - (v.pv_forecast + v.pv_terminal)) < 1e-9
+    assert abs(v.equity - (v.enterprise - v.net_debt)) < 1e-9
+    assert abs(v.per_share - v.equity / 100.0) < 1e-12
+    assert abs(v.upside - (v.per_share / 50.0 - 1)) < 1e-12
+    # Most of a DCF is the lump at the end, and the page says so.
+    assert 60 < v.terminal_share < 80, v.terminal_share
+
+    # Debt comes off; net cash adds on.
+    owes = dcf.valuation(Flat(), 50.0, 100.0, debt=500.0, cash=0.0,
+                         sic="3570", discount=0.10)
+    holds = dcf.valuation(Flat(), 50.0, 100.0, debt=0.0, cash=500.0,
+                          sic="3570", discount=0.10)
+    assert owes.per_share < v.per_share < holds.per_share
+    assert abs((holds.per_share - owes.per_share) - 10.0) < 1e-9
+
+    # A higher discount rate must lower the value, every time.
+    vals = [dcf.valuation(Flat(), 50.0, 100.0, 0.0, 0.0, "3570",
+                          discount=r).per_share for r in
+            (0.07, 0.08, 0.09, 0.10, 0.12)]
+    assert all(b < a for a, b in zip(vals, vals[1:])), vals
+    # And the move is big, which is the honest point of the slider.
+    assert vals[0] / vals[-1] > 1.5, (vals[0], vals[-1])
+
+    # Growing cash is worth more than flat cash.
+    class Growing:
+        years = [Y(100.0 * 1.08 ** i) for i in range(6)]
+
+    assert (dcf.valuation(Growing(), 50.0, 100.0, 0.0, 0.0, "3570").per_share
+            > dcf.valuation(Flat(), 50.0, 100.0, 0.0, 0.0, "3570").per_share)
+
+    # Refusals, each with its own reason and no number.
+    for kw, word in (({"sic": "6022"}, "banks"),
+                     ({"shares": None}, "share count"),
+                     ({"discount": 0.02}, "discount rate")):
+        args = {"price": 50.0, "shares": 100.0, "debt": 0.0, "cash": 0.0,
+                "sic": "3570"}
+        args.update(kw)
+        r = dcf.valuation(Flat(), **args)
+        assert not r.available and word in r.problem, (kw, r.problem)
+
+    class Burn:
+        years = [Y(-100.0) for _ in range(6)]
+
+    assert not dcf.valuation(Burn(), 50.0, 100.0, 0.0, 0.0, "3570").available
+
+    # Every verdict band and growth note produces words.
+    for pr in (1.0, 10.0, 13.0, 20.0, 500.0):
+        vv = dcf.valuation(Flat(), pr, 100.0, 0.0, 0.0, "3570")
+        h, b = dcf.valuation_verdict(vv)
+        assert h and b, pr
+    assert "grown" in dcf.growth_note(
+        dcf.valuation(Growing(), 50.0, 100.0, 0.0, 0.0, "3570"))
+    assert "flat" in dcf.growth_note(v)
+    print("dcf valuation ok")
 
 
 FAKE_10K = """
@@ -1670,8 +1642,8 @@ def main():
     test_split_only_prices()
     test_split_break()
     test_reverse_dcf()
-    test_forward_projection()
     test_forecast_lines()
+    test_dcf_valuation()
     test_surprises()
     test_news()
     test_rate_pacing()
