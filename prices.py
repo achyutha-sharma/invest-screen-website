@@ -94,6 +94,11 @@ class PriceClient:
         try:
             import requests
 
+            # Paced like quotes are. The allowance is per account across
+            # every endpoint, so earnings and news calls that skipped the
+            # limiter still spent the budget -- they were simply invisible
+            # to it, which is the worst of both.
+            self._pace()
             r = requests.get(EARNINGS_URL,
                              params={"symbol": sym, "token": self.key},
                              timeout=self.timeout)
@@ -111,14 +116,24 @@ class PriceClient:
             est, act = row.get("estimate"), row.get("actual")
             if est is None:
                 continue
+            # Converted inside its own guard. The float() calls sat outside
+            # the request's try block, so one malformed row from the feed --
+            # an empty string where a number was expected -- raised out of a
+            # method whose whole contract is to return empty instead. One bad
+            # quarter now drops out; the rest of the history survives.
+            try:
+                estimate = float(est)
+                actual = None if act is None else float(act)
+            except (TypeError, ValueError):
+                continue
             out.append({
                 "period": str(row.get("period", ""))[:10],
                 "quarter": row.get("quarter"),
                 "year": row.get("year"),
-                "estimate": float(est),
+                "estimate": estimate,
                 # None means the quarter has not been reported yet, which
                 # makes this row the forward expectation rather than history.
-                "actual": None if act is None else float(act),
+                "actual": actual,
                 "surprise_pct": row.get("surprisePercent"),
             })
 
@@ -138,7 +153,9 @@ class PriceClient:
         if not sym or not self.key:
             return []
 
-        cached = self._cached(f"n_{sym}.json", 1_800)      # half an hour
+        # The window is part of the key. Without it a four-day request could
+        # be served a cached thirty-day answer, or the reverse.
+        cached = self._cached(f"n_{sym}_{days}.json", 1_800)   # half an hour
         if isinstance(cached, list):
             return [r for r in cached
                     if isinstance(r, dict) and r.get("headline") and r.get("url")][:limit]
@@ -147,6 +164,7 @@ class PriceClient:
         try:
             import requests
 
+            self._pace()
             r = requests.get(
                 NEWS_URL,
                 params={"symbol": sym,
@@ -181,7 +199,7 @@ class PriceClient:
 
         out.sort(key=lambda r: r["when"], reverse=True)
         if out:
-            self._store(f"n_{sym}.json", out[:8])
+            self._store(f"n_{sym}_{days}.json", out[:8])
         return out[:limit]
 
     def next_estimate(self, ticker: str) -> dict | None:
@@ -324,12 +342,23 @@ class PriceClient:
         if not sym or not self.history_key:
             return []
 
-        cached = self._cached(f"h_{sym}.json", HISTORY_TTL)
+        # The span is part of the key, so asking for five years cannot be
+        # served the eleven-year answer that happened to be cached.
+        cached = self._cached(f"h_{sym}_{years}.json", HISTORY_TTL)
         if cached is not None:
             return [tuple(r) for r in cached]
 
-        start = date.today().replace(year=date.today().year - years).isoformat()
+        # Not .replace(year=...): on 29 February that raises ValueError,
+        # because the day does not exist in the target year. Stepping back
+        # to the 28th is right every other day too.
+        today = date.today()
+        try:
+            begin = today.replace(year=today.year - years)
+        except ValueError:
+            begin = today.replace(year=today.year - years, day=28)
+        start = begin.isoformat()
         out: list[tuple[str, float]] = []
+        raw: list[tuple] = []
         try:
             import requests
 
@@ -347,22 +376,81 @@ class PriceClient:
                     px = row.get("adjClose", row.get("close"))
                     if d and px is not None:
                         out.append((d, float(px)))
+                        raw.append((d, row.get("close"), row.get("splitFactor")))
         except Exception:
             return []
 
         out.sort()
         if out:
-            self._store(f"h_{sym}.json", out)
+            self._store(f"h_{sym}_{years}.json", out)
+            split_only = self._split_only(raw)
+            if split_only:
+                self._store(f"hs_{sym}_{years}.json", split_only)
         return out
+
+    @staticmethod
+    def _split_only(raw: list[tuple]) -> list[tuple[str, float]]:
+        """Closing prices put on today's share basis, dividends left alone.
+
+        adjClose removes dividends as well as splits, which is right for
+        measuring a return and wrong for a P/E: the earnings side of that
+        ratio has had no dividend adjustment, so dividing by adjClose makes
+        a dividend payer's past look cheaper every year you go back.
+
+        Splits still have to be taken out, because a split changes EPS too.
+        Tiingo gives the split that happened on each date, so walking the
+        series newest to oldest and accumulating those factors puts every
+        past price on the current basis and touches nothing else.
+        """
+        rows = sorted(r for r in raw if r[0] and r[1] is not None)
+        if not rows:
+            return []
+        out: list[tuple[str, float]] = []
+        cum = 1.0
+        for d, close, factor in reversed(rows):          # newest first
+            try:
+                out.append((d, float(close) / cum))
+            except (TypeError, ValueError, ZeroDivisionError):
+                return []
+            try:
+                f = float(factor) if factor else 1.0
+            except (TypeError, ValueError):
+                f = 1.0
+            if f > 0:
+                # Everything older than this row sits before the split.
+                cum *= f
+        out.reverse()
+        return out
+
+    def monthly_split_only(self, ticker: str, years: int = 11
+                           ) -> list[tuple[str, float]]:
+        """Month-end closes on today's share basis, for valuation ratios.
+
+        Falls back to the ordinary adjusted series when the provider does
+        not give enough to build this one, so a missing field costs
+        accuracy rather than the whole chart.
+        """
+        sym = ticker.strip().upper()
+        if not sym or not self.history_key:
+            return []
+        cached = self._cached(f"hs_{sym}_{years}.json", HISTORY_TTL)
+        if cached is not None:
+            return [tuple(r) for r in cached]
+        self.monthly(ticker, years)                 # fills both caches
+        cached = self._cached(f"hs_{sym}_{years}.json", HISTORY_TTL)
+        if cached is not None:
+            return [tuple(r) for r in cached]
+        return self.monthly(ticker, years)
 
     def at_fiscal_ends(self, ticker: str, ends: list[tuple[str, str]]) -> dict[str, float]:
         """A price near each fiscal year end, keyed by period label.
 
-        Used for a company's own P/E history. Takes the closest month-end
-        within 45 days, so a year with no nearby data drops out rather than
-        borrowing a price from months away.
+        Used for a company's own P/E history, so it takes the split-only
+        series rather than the dividend-adjusted one. Takes the closest
+        month-end within 45 days, so a year with no nearby data drops out
+        rather than borrowing a price from months away.
         """
-        hist = self.monthly(ticker)
+        hist = self.monthly_split_only(ticker)
         if not hist:
             return {}
 
