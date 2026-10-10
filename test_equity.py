@@ -733,7 +733,7 @@ def test_forward_projection():
     assert npf.available and npf.base.per_share_end > 0
     assert npf.base.annual_return is None
     head, body = dcf.forecast_verdict(npf)
-    assert "no share price" in head.lower()
+    assert "no price" in head.lower(), head
 
     # Every verdict band says something.
     for pr in (5.0, 30.0, 60.0, 200.0, 2_000.0):
@@ -741,7 +741,100 @@ def test_forward_projection():
         if ff.available:
             h, bdy = dcf.forecast_verdict(ff)
             assert h and bdy, pr
+
+    # "Better" must be better, including for a company in decline.
+    #
+    # The scenarios used to be a multiple of the filed rate, so a company
+    # shrinking 2.5% a year had its "if growth improves" row showing
+    # -3.8% -- a steeper fall than the base case. The table read backwards
+    # for exactly the companies where the question matters most.
+    falling = filer([1_000 * 0.975 ** i for i in range(10)])
+    fd = dcf.forecast(falling, price=20.0, shares=400.0, debt=0.0,
+                      cash=0.0, sic="3570")
+    assert fd.available and fd.history < 0, fd.history
+    assert fd.slower.growth < fd.base.growth < fd.faster.growth, (
+        fd.slower.growth, fd.base.growth, fd.faster.growth)
+    assert (fd.slower.per_share_end < fd.base.per_share_end
+            < fd.faster.per_share_end)
+    # The same ordering must hold for a grower.
+    assert f.slower.growth < f.base.growth < f.faster.growth
     print("forward projection ok")
+
+
+def test_forecast_lines():
+    """Sales, profit and earnings projected beside cash flow.
+
+    They can disagree, and where they do is the point: sales rising while
+    cash flow falls means each sale is costing more to make.
+    """
+    import dcf
+
+    def filer(rev, ni, eps, ocf, shares=1_000):
+        r = {"rev": [], "ni": [], "eps": [], "ocf": [], "capex": [], "sh": []}
+        for i in range(10):
+            y = 2016 + i
+            s, e = f"{y}-01-01", f"{y}-12-31"
+            r["rev"].append(dur(s, e, rev[i]))
+            r["ni"].append(dur(s, e, ni[i]))
+            r["eps"].append(dur(s, e, eps[i]))
+            r["ocf"].append(dur(s, e, ocf[i] + 1_000))
+            r["capex"].append(dur(s, e, 1_000))
+            r["sh"].append(dur(s, e, shares))
+        return extract_equity(build("LINES CO", {
+            "Revenues": {"units": {"USD": r["rev"]}},
+            "NetIncomeLoss": {"units": {"USD": r["ni"]}},
+            "EarningsPerShareDiluted": {"units": {"USD/shares": r["eps"]}},
+            "NetCashProvidedByUsedInOperatingActivities":
+                {"units": {"USD": r["ocf"]}},
+            "PaymentsToAcquirePropertyPlantAndEquipment":
+                {"units": {"USD": r["capex"]}},
+            "WeightedAverageNumberOfDilutedSharesOutstanding":
+                {"units": {"shares": r["sh"]}},
+        }))
+
+    # Sales up, cash flow down -- the divergence the panel exists to show.
+    eq = filer(rev=[round(45_000 * 1.034 ** i) for i in range(10)],
+               ni=[round(5_000 * 1.012 ** i) for i in range(10)],
+               eps=[round(3.00 * 1.028 ** i, 2) for i in range(10)],
+               ocf=[round(6_000 * 0.975 ** i) for i in range(10)])
+    lines = {ln.key: ln for ln in dcf.forecast_lines(eq)}
+    assert set(lines) == {"revenue", "net_income", "eps", "fcf"}
+
+    assert abs(lines["revenue"].growth - 0.034) < 2e-3, lines["revenue"].growth
+    assert abs(lines["eps"].growth - 0.028) < 2e-3, lines["eps"].growth
+    assert lines["fcf"].growth < 0, lines["fcf"].growth
+    # Growth and direction must agree on every line.
+    for ln in lines.values():
+        assert ln.end is not None and ln.now is not None, ln
+        assert (ln.end > ln.now) == (ln.growth > 0), ln
+        assert abs(ln.end - ln.now * (1 + ln.growth) ** 10) < 1e-6, ln
+
+    # Per-share lines use the latest year, not a three-year average, which
+    # would blunt the very trend being measured.
+    assert lines["eps"].now == round(3.00 * 1.028 ** 9, 2)
+    assert lines["eps"].per_share and not lines["revenue"].per_share
+
+    # Too little history says so rather than guessing.
+    thin = extract_equity(build("THIN CO", {
+        "Revenues": {"units": {"USD": [
+            dur(f"{2024+i}-01-01", f"{2024+i}-12-31", 100) for i in range(2)]}},
+        "NetIncomeLoss": {"units": {"USD": [
+            dur(f"{2024+i}-01-01", f"{2024+i}-12-31", 10) for i in range(2)]}},
+    }))
+    for ln in dcf.forecast_lines(thin):
+        assert ln.end is None and ln.problem, ln
+
+    # A line crossing zero has no rate, and one bad line must not stop
+    # the others from being shown.
+    swing = [-500, -200, 100, 400, 700, 900, 1_100, 1_300, 1_500, 1_700]
+    swingy = filer(rev=[round(45_000 * 1.03 ** i) for i in range(10)],
+                   ni=swing,
+                   eps=[round(x / 1_000, 2) for x in swing],
+                   ocf=[round(6_000 * 1.02 ** i) for i in range(10)])
+    sl = {ln.key: ln for ln in dcf.forecast_lines(swingy)}
+    assert sl["net_income"].end is None and sl["net_income"].problem
+    assert sl["revenue"].end is not None
+    print("forecast lines ok")
 
 
 FAKE_10K = """
@@ -1578,6 +1671,7 @@ def main():
     test_split_break()
     test_reverse_dcf()
     test_forward_projection()
+    test_forecast_lines()
     test_surprises()
     test_news()
     test_rate_pacing()
