@@ -15,6 +15,7 @@ import streamlit as st
 
 from datetime import date
 
+import dcf
 from filing_text import latest_filings, read_filing
 import summary as summ
 from peers import suggest
@@ -664,13 +665,15 @@ div[data-testid="stHorizontalBlock"]:has(.peernav) .stButton button
 @media (max-width:640px){
   /* the toggle: fill the width so labels never wrap mid-word, and hide
      the radio marks, which no other control on the page uses */
-  div[role="radiogroup"]{width:100% !important;display:flex !important;gap:.2rem}
+  div[role="radiogroup"]{width:100% !important;display:flex !important;gap:.15rem}
   div[role="radiogroup"] > label{flex:1 1 0;min-width:0;justify-content:center;
-    text-align:center;padding:.55rem .3rem !important;white-space:nowrap}
+    text-align:center;padding:.55rem .15rem !important;white-space:nowrap}
   div[role="radiogroup"] > label > div:first-child,
   div[role="radiogroup"] input,
   div[role="radiogroup"] [data-baseweb="radio"] > div:first-child{display:none !important}
-  div[role="radiogroup"] > label p{font-size:.85rem !important;white-space:nowrap}
+  /* Five views now, so the labels have to be smaller to sit on one row at
+     phone width without wrapping mid-word. */
+  div[role="radiogroup"] > label p{font-size:.76rem !important;white-space:nowrap}
 
   /* cards: equal height in each row, tighter gaps */
   div[data-testid="stHorizontalBlock"]{gap:.5rem !important;align-items:stretch}
@@ -2089,7 +2092,7 @@ if _annual_age >= 9:
         "See every quarterly report on SEC EDGAR →</a></p></div>",
         unsafe_allow_html=True)
 
-_views = ["Research", "Summary", "Compare", "Teach me"]
+_views = ["Research", "Summary", "Priced in", "Compare", "Teach me"]
 # Looked up by name, not by position. This was a hard-coded 1, which meant
 # "Teach me" until Compare was added in the middle and the glossary link
 # started opening the wrong view.
@@ -2241,6 +2244,132 @@ if mode == "Summary":
     st.markdown('<p class="disc">Figures come from SEC filings; share prices come from '
                 "a market feed. Educational research only — not advice.</p>" + BYLINE,
                 unsafe_allow_html=True)
+    st.stop()
+
+if mode == "Priced in":
+    sh("What the price assumes", "a cash flow model, run backwards")
+
+    st.markdown(
+        '<p class="lead">A valuation model run forwards gives you a number '
+        'that looks like a fact and is mostly a restatement of three '
+        'assumptions. So this runs it <b>backwards</b>. The price is the one '
+        'thing that is certain — the market has settled on it. The question '
+        'is what that price is already assuming.</p>',
+        unsafe_allow_html=True)
+
+    _d = st.slider("Discount rate", 6.0, 14.0, dcf.DEFAULT_DISCOUNT * 100, 0.5,
+                   format="%.1f%%", key="dcf_discount",
+                   help="What a buyer wants to earn each year for taking the "
+                        "risk. Higher means future cash is worth less today, "
+                        "so the price has to assume more growth to justify "
+                        "itself.")
+    _t = st.slider("Growth after year 10", 0.0, 4.0,
+                   dcf.DEFAULT_TERMINAL * 100, 0.25, format="%.2f%%",
+                   key="dcf_terminal",
+                   help="How fast the company grows for ever, once it is "
+                        "mature. It cannot exceed the economy for long, "
+                        "which is why this stays near inflation.")
+
+    rv = dcf.reverse(eq, price=q.price if q.available else None,
+                     shares=latest.get("shares"),
+                     debt=latest.get("total_debt"), cash=latest.get("cash"),
+                     sic=str(prof.get("sic") or ""),
+                     discount=_d / 100, terminal=_t / 100)
+
+    if not rv.available:
+        st.markdown(f'<div class="stale"><span class="ic">●</span>'
+                    f"<p>{E(rv.problem)}</p></div>", unsafe_allow_html=True)
+        fs = dcf.fcf_series(eq)
+        if fs:
+            # Escaped. Two bare dollar signs in one line of plain markdown
+            # are read as a LaTeX expression, and Streamlit eats everything
+            # between them -- here, most of the cash flow history.
+            st.caption("Free cash flow by filed year: " + " · ".join(
+                f"{E(l)} {money(v, html=False).replace(DH, chr(92) + DH)}"
+                for l, v in fs[-6:]))
+    else:
+        head, body = dcf.verdict(rv)
+        # Not `pct`: that is the module's percent formatter, and shadowing it
+        # here would break every later caller on this page.
+        _g = rv.implied * 100
+        st.markdown(
+            f'<div class="panel"><span class="big">{_g:+,.1f}% a year</span>'
+            f'<p class="bigsub"><b>{E(head)}.</b> {E(body)}</p></div>',
+            unsafe_allow_html=True)
+
+        # The two rates side by side, because the comparison is the point.
+        # money() defaults to the HTML entity for the dollar sign, which is
+        # what these cells need: a bare $ inside a markdown block is read as
+        # LaTeX even when the block is HTML. The values are built here from
+        # numbers, so they are not escaped again -- escaping would turn the
+        # entity itself into visible text.
+        rows = [("What the price assumes", f"{_g:+,.1f}% a year",
+                 f"free cash flow growth for {rv.horizon} years")]
+        if rv.history is not None:
+            rows.append(("What it has achieved", f"{rv.history * 100:+,.1f}% a year",
+                         f"across {rv.history_years} filed years"))
+        rows.append(("Starting cash flow", money(rv.fcf_base),
+                     f"averaged over {rv.base_years} year"
+                     f"{'s' if rv.base_years != 1 else ''}"))
+        rows.append(("Value being justified", money(rv.enterprise),
+                     f"{money(rv.market_cap)} of shares"
+                     + (f" plus {money(rv.net_debt)} of net debt"
+                        if (rv.net_debt or 0) > 0 else
+                        f" less {money(abs(rv.net_debt or 0))} of net cash")))
+        st.markdown('<div class="panel"><table class="comp"><tbody>' + "".join(
+            f'<tr><td><b>{E(a)}</b><i>{c}</i></td>'
+            f'<td class="num">{b}</td></tr>' for a, b, c in rows)
+            + "</tbody></table></div>", unsafe_allow_html=True)
+
+        # How much the answer moves with the one number nobody can observe.
+        grid = dcf.sensitivity(rv)
+        if len(grid) > 1:
+            sh("How much that depends on the discount rate",
+               "the assumption doing the most work")
+            cells = "".join(
+                f"<th>{r_ * 100:.0f}%</th>" for r_, _ in grid)
+            vals = "".join(
+                "<td>" + (f"{g * 100:+,.1f}%" if g is not None else "—")
+                + "</td>" for _, g in grid)
+            st.markdown(
+                '<div class="panel"><table class="comp cmp"><thead><tr>'
+                '<th class="mname">Discount rate</th>' + cells + "</tr></thead>"
+                '<tbody><tr><td class="mname"><b>Growth the price implies</b></td>'
+                + vals + "</tr></tbody></table></div>", unsafe_allow_html=True)
+            st.caption(
+                "Nobody can look up the right discount rate — it is chosen, "
+                "not observed. This row is how much the conclusion moves when "
+                "that choice changes, which is the honest measure of how much "
+                "any single answer above is worth.")
+
+        for n in rv.notes:
+            st.caption(n)
+
+    with st.expander("How this works, and what it cannot tell you"):
+        st.markdown(
+            "**The model.** Free cash flow — the cash left after running the "
+            "business and paying for the equipment it needs — is projected "
+            f"forward {dcf.HORIZON} years at some growth rate, then valued "
+            "for ever after that. Future cash is discounted, because money "
+            "later is worth less than money now. Add it all up and you get "
+            "what the business is worth.\n\n"
+            "**Run backwards.** Instead of choosing a growth rate and "
+            "producing a value, this takes the value the market has already "
+            "set and solves for the growth rate that would justify it.\n\n"
+            "**What it is not.** It is not a price target, and it does not "
+            "say whether the shares are cheap. A price assuming 20% growth is "
+            "not wrong — plenty of companies have done it. It tells you what "
+            "you would be betting on, so you can decide whether you believe "
+            "it.\n\n"
+            "**Where it breaks.** It needs positive free cash flow, so it "
+            "cannot value a company still investing more than it earns. It "
+            "does not work on banks or insurers at all. And it assumes one "
+            "steady growth rate, which no real company has.")
+
+    st.markdown('<p class="disc">Cash flow figures come from SEC filings; the '
+                "share price comes from a market feed. The growth rate is "
+                "arithmetic from that price, not a forecast. Educational "
+                "only — not advice.</p>" + BYLINE, unsafe_allow_html=True)
     st.stop()
 
 if mode == "Compare":
